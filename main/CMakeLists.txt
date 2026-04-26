@@ -1,0 +1,17 @@
+idf_component_register(SRCS "main.c" 
+                            "drivers/gpio_driver.c"
+                            "drivers/adc_driver.c"
+                            "drivers/i2c_manager.c"
+                            "drivers/ds3231.c"
+                            "drivers/lcd_i2c.c"
+                            "drivers/buzzer_pattern.c"
+                            "webserver/http_server.c"
+                            "webserver/https_server.c"
+                            "alarm_manager.c"
+                            "logging.c"
+                            "dns_server.c"
+                            "predictive_maintenance.c"
+                            "power_manager.c"
+                    INCLUDE_DIRS "." "drivers" "webserver" "certs"
+                    PRIV_REQUIRES mdns esp_http_client esp_http_server esp_https_server esp_adc driver esp_timer nvs_flash esp_wifi esp_event esp_netif app_update json lwip mbedtls
+                    EMBED_TXTFILES "certs/server_cert.pem" "certs/server_key.pem")

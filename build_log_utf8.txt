@@ -1,0 +1,39 @@
+﻿Executing action: all (aliases: build)
+python.exe : Build 
+directory 'C:\Aep_Bil
+l8Classic\build' 
+configured for 
+project 'C:\Users\use
+r\Documents\sonnette2
+026-esp32\v11_expert_
+et_classic_final_19_1
+2_22025\bacukups_v11-
+expert_classic_19_12_
+2025\AepBill_v10_19_1
+2_2025' not 'C:\Aep_B
+ill8Classic'. Run 
+'idf.py fullclean' 
+to start again.
+Au caractère C:\Users
+\user\AppData\Local\T
+emp\esp_idf_activate_
+user\activate_gcrqq6t
+d.ps1:8 : 19
++ function idf.py { 
+&python "$Env:IDF_PAT
+H\tools\idf.py" 
+$args }
++                   ~
+~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo   
+           : NotSpe  
+  cified: (Build d   
+ irectory...to st    
+art again.:Strin    
+g) [], RemoteExc    
+eption
+    + FullyQualified 
+   ErrorId : Native  
+  CommandError
+ 

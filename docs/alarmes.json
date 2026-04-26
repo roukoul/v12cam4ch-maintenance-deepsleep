@@ -1,0 +1,133 @@
+{
+    "version": "1.0",
+    "schedule": {
+        "monday": [],
+        "tuesday": [],
+        "wednesday": [
+            {
+                "start": "22:11:10",
+                "end": "22:11:16",
+                "endDay": 0,
+                "relay": 0
+            },
+            {
+                "start": "22:11:30",
+                "end": "22:11:34",
+                "endDay": 0,
+                "relay": 0
+            },
+            {
+                "start": "22:11:44",
+                "end": "22:11:48",
+                "endDay": 0,
+                "relay": 0
+            },
+            {
+                "start": "22:12:21",
+                "end": "22:12:29",
+                "endDay": 0,
+                "relay": 0
+            },
+            {
+                "start": "22:12:31",
+                "end": "22:12:38",
+                "endDay": 0,
+                "relay": 0
+            },
+            {
+                "start": "22:12:36",
+                "end": "22:12:45",
+                "endDay": 0,
+                "relay": 0
+            },
+            {
+                "start": "22:12:49",
+                "end": "22:12:52",
+                "endDay": 0,
+                "relay": 0
+            },
+            {
+                "start": "22:12:51",
+                "end": "22:12:57",
+                "endDay": 0,
+                "relay": 0
+            },
+            {
+                "start": "22:13:04",
+                "end": "22:13:10",
+                "endDay": 0,
+                "relay": 0
+            },
+            {
+                "start": "22:13:12",
+                "end": "22:13:20",
+                "endDay": 0,
+                "relay": 0
+            },
+            {
+                "start": "22:14:44",
+                "end": "22:14:49",
+                "endDay": 0,
+                "relay": 0
+            },
+            {
+                "start": "22:15:27",
+                "end": "22:15:35",
+                "endDay": 0,
+                "relay": 0
+            },
+            {
+                "start": "22:15:43",
+                "end": "22:15:47",
+                "endDay": 0,
+                "relay": 0
+            },
+            {
+                "start": "22:17:05",
+                "end": "22:17:15",
+                "endDay": 0,
+                "relay": 0
+            },
+            {
+                "start": "22:18:00",
+                "end": "22:18:08",
+                "endDay": 0,
+                "relay": 0
+            },
+            {
+                "start": "22:18:03",
+                "end": "22:18:12",
+                "endDay": 0,
+                "relay": 0
+            },
+            {
+                "start": "22:18:19",
+                "end": "22:18:23",
+                "endDay": 0,
+                "relay": 0
+            },
+            {
+                "start": "22:18:35",
+                "end": "22:18:42",
+                "endDay": 0,
+                "relay": 0
+            },
+            {
+                "start": "22:19:11",
+                "end": "22:19:15",
+                "endDay": 0,
+                "relay": 0
+            },
+            {
+                "start": "22:19:40",
+                "end": "22:19:49",
+                "endDay": 0,
+                "relay": 0
+            }
+        ],
+        "thursday": [],
+        "friday": [],
+        "saturday": [],
+        "sunday": []
+    }
+}

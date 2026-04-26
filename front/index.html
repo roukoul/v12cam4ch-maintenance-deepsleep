@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang='ar' dir='rtl'>
+<head>
+    <meta charset='UTF-8'>
+    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+    <title>لوحة التحكم AepBill</title>
+    <link rel="stylesheet" href="style.css">
+    <script>
+        function openTab(evt, dayName) {
+            var i, tabcontent, tablinks;
+            tabcontent = document.getElementsByClassName('tabcontent');
+            for (i = 0; i < tabcontent.length; i++) {
+                tabcontent[i].style.display = 'none';
+            }
+            tablinks = document.getElementsByClassName('tablink');
+            for (i = 0; i < tablinks.length; i++) {
+                tablinks[i].className = tablinks[i].className.replace(' active', '');
+            }
+            document.getElementById(dayName).style.display = 'block';
+            if (evt) { evt.currentTarget.className += ' active'; }
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            var today = new Date().getDay(); // 0=Sunday
+            // Adjust to map to your specific indices if needed (0-6)
+            var dayIndex = today; 
+            openTab(null, 'day' + dayIndex); 
+            const activeButton = document.querySelector('.tablink:nth-child(' + (dayIndex + 1) + ')');
+            if (activeButton) { activeButton.classList.add('active'); }
+        });
+
+        setInterval(() => {
+            fetch('/time').then(res => res.text()).then(data => {
+                const elem = document.getElementById('dateTime');
+                if (elem) elem.innerText = data;
+            }).catch(err => console.log('Time update failed'));
+        }, 2000);
+
+        setInterval(() => {
+            fetch('/status').then(res => res.json()).then(data => {
+                const statusElem = document.getElementById('status-0');
+                if (statusElem) statusElem.innerText = data[0] == '1' ? 'On' : 'Off';
+                const ampsElem = document.getElementById('live-amps');
+                if (ampsElem) ampsElem.innerText = parseFloat(data[1]).toFixed(3) + ' A';
+            }).catch(err => console.log('Status update failed'));
+        }, 5000);
+
+        function doubleConfirmReset() {
+            if (confirm('هل أنت متأكد تريد إعادة ضبط المصنع؟ ستُحذف جميع البيانات!')) {
+                if (confirm('تأكيد نهائي: اضغط موافق لإعادة الضبط.')) {
+                    window.location.href = '/factoryReset';
+                }
+            }
+        }
+    </script>
+</head>
+<body>
+    <div class='container'>
+        <h1>جرس AepBill <span class='aep-logo'>Aep</span></h1>
+
+        <!-- Status Box -->
+        <div class='status-box status-ok' id="main-status-box">✅ النظام يعمل بشكل طبيعي</div>
+
+        <!-- Technical Details -->
+        <div class='device-card'>
+            <h3>مراقبة التيار (RMS HighSens)</h3>
+            <div class='data-row'><span>التيار المقاس:</span><span id='live-amps' class='data-val' style='direction:ltr'>-- A</span></div>
+            <div class='data-row'><span>الحد الأدنى (مفتوح):</span><span class='data-val' style='direction:ltr'>0.08 A</span></div>
+            <div class='data-row'><span>حد التسريب (OFF):</span><span class='data-val' style='direction:ltr'>0.35 A</span></div>
+        </div>
+
+        <div class='info-header'>
+            <p><strong>التاريخ والوقت:</strong> <span id='dateTime'>--/--/---- --:--:--</span></p>
+        </div>
+
+        <h2>البرمجة</h2>
+        <div class='device-card'>
+            <h3>الحالة الحالية: <span id='status-0'>Off</span></h3>
+            <p><strong>جدول اليوم:</strong> <span id="today-schedule-status">غير مفعلة</span></p>
+            <a href='/settings'>تعديل الجدول</a>
+        </div>
+
+        <!-- LCD Control -->
+        <div class='device-card' style='background:linear-gradient(135deg,#11998e 0%,#38ef7d 100%);color:white;'>
+            <h3>📺 تحكم شاشة LCD</h3>
+            <p style='margin:10px 0;'>الوضع الحالي: <b>التاريخ/الوقت</b></p>
+            <div style='display:flex;gap:8px;justify-content:center;flex-wrap:wrap;'>
+                <a href='/lcdDisplayMode?mode=datetime' style='color:white;background:rgba(255,255,255,0.2);padding:8px 12px;border-radius:6px;font-size:0.9em;text-decoration:none;'>⏰ التاريخ/الوقت</a>
+                <a href='/lcdDisplayMode?mode=status' style='color:white;background:rgba(255,255,255,0.2);padding:8px 12px;border-radius:6px;font-size:0.9em;text-decoration:none;'>📊 القناة/الحالة</a>
+            </div>
+        </div>
+
+        <div class='nav-menu'>
+            <a href='/changePassword'>تغيير كلمة المرور</a>
+            <a href='/wifiConfig'>تغيير إعدادات الواي فاي</a>
+            <a href='/timezoneConfig'>إعدادات التوقيت</a>
+            <a href='/setTime' class='set-time'>ضبط الساعة يدويًا</a>
+            <a href='/restart' class='restart'>إعادة تشغيل</a>
+            <a href='#' class='factory-reset' onclick='doubleConfirmReset(); return false;'>إعادة ضبط المصنع</a>
+            <a href='/about' class='about'>حول</a>
+            <a href='/currentConfig'>⚡ إعداد مستشعر التيار</a>
+            <a href='/logout' class='logout'>تسجيل الخروج</a>
+        </div>
+
+        <div class='credits'>🚀 AepBill v12.0 2026 - إعداد الدادسي أحمد @Aep</div>
+    </div>
+</body>
+</html>

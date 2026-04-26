@@ -1,0 +1,79 @@
+{
+    "version": "1.0",
+    "schedule": {
+        "monday": [
+            {
+                "start": "08:00:00",
+                "end": "08:00:10",
+                "endDay": 0,
+                "relay": 0
+            },
+            {
+                "start": "09:00:00",
+                "end": "09:00:10",
+                "endDay": 0,
+                "relay": 1
+            }
+        ],
+        "tuesday": [
+            {
+                "start": "10:00:00",
+                "end": "10:00:10",
+                "endDay": 0,
+                "relay": 2
+            }
+        ],
+        "wednesday": [
+            {
+                "start": "11:00:00",
+                "end": "11:00:10",
+                "endDay": 0,
+                "relay": 3
+            },
+            {
+                "start": "22:11:10",
+                "end": "22:11:16",
+                "endDay": 0,
+                "relay": 0
+            },
+            {
+                "start": "22:11:30",
+                "end": "22:11:34",
+                "endDay": 0,
+                "relay": 1
+            }
+        ],
+        "thursday": [
+            {
+                "start": "12:00:00",
+                "end": "12:00:10",
+                "endDay": 0,
+                "relay": 0
+            }
+        ],
+        "friday": [
+            {
+                "start": "13:00:00",
+                "end": "13:00:10",
+                "endDay": 0,
+                "relay": 1
+            }
+        ],
+        "saturday": [
+            {
+                "start": "14:00:00",
+                "end": "14:00:10",
+                "endDay": 0,
+                "relay": 2
+            }
+        ],
+        "sunday": [
+            {
+                "start": "15:00:00",
+                "end": "15:00:10",
+                "endDay": 0,
+                "relay": 3
+            }
+        ]
+    }
+}

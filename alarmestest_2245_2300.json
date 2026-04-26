@@ -1,0 +1,187 @@
+{
+    "version": "1.0",
+    "schedule": {
+        "monday": [
+            {
+                "start": "22:45:00",
+                "end": "23:00:00",
+                "endDay": 0,
+                "relay": 0
+            },
+            {
+                "start": "22:45:00",
+                "end": "23:00:00",
+                "endDay": 0,
+                "relay": 1
+            },
+            {
+                "start": "22:45:00",
+                "end": "23:00:00",
+                "endDay": 0,
+                "relay": 2
+            },
+            {
+                "start": "22:45:00",
+                "end": "23:00:00",
+                "endDay": 0,
+                "relay": 3
+            }
+        ],
+        "tuesday": [
+            {
+                "start": "22:45:00",
+                "end": "23:00:00",
+                "endDay": 0,
+                "relay": 0
+            },
+            {
+                "start": "22:45:00",
+                "end": "23:00:00",
+                "endDay": 0,
+                "relay": 1
+            },
+            {
+                "start": "22:45:00",
+                "end": "23:00:00",
+                "endDay": 0,
+                "relay": 2
+            },
+            {
+                "start": "22:45:00",
+                "end": "23:00:00",
+                "endDay": 0,
+                "relay": 3
+            }
+        ],
+        "wednesday": [
+            {
+                "start": "22:45:00",
+                "end": "23:00:00",
+                "endDay": 0,
+                "relay": 0
+            },
+            {
+                "start": "22:45:00",
+                "end": "23:00:00",
+                "endDay": 0,
+                "relay": 1
+            },
+            {
+                "start": "22:45:00",
+                "end": "23:00:00",
+                "endDay": 0,
+                "relay": 2
+            },
+            {
+                "start": "22:45:00",
+                "end": "23:00:00",
+                "endDay": 0,
+                "relay": 3
+            }
+        ],
+        "thursday": [
+            {
+                "start": "22:45:00",
+                "end": "23:00:00",
+                "endDay": 0,
+                "relay": 0
+            },
+            {
+                "start": "22:45:00",
+                "end": "23:00:00",
+                "endDay": 0,
+                "relay": 1
+            },
+            {
+                "start": "22:45:00",
+                "end": "23:00:00",
+                "endDay": 0,
+                "relay": 2
+            },
+            {
+                "start": "22:45:00",
+                "end": "23:00:00",
+                "endDay": 0,
+                "relay": 3
+            }
+        ],
+        "friday": [
+            {
+                "start": "22:45:00",
+                "end": "23:00:00",
+                "endDay": 0,
+                "relay": 0
+            },
+            {
+                "start": "22:45:00",
+                "end": "23:00:00",
+                "endDay": 0,
+                "relay": 1
+            },
+            {
+                "start": "22:45:00",
+                "end": "23:00:00",
+                "endDay": 0,
+                "relay": 2
+            },
+            {
+                "start": "22:45:00",
+                "end": "23:00:00",
+                "endDay": 0,
+                "relay": 3
+            }
+        ],
+        "saturday": [
+            {
+                "start": "22:45:00",
+                "end": "23:00:00",
+                "endDay": 0,
+                "relay": 0
+            },
+            {
+                "start": "22:45:00",
+                "end": "23:00:00",
+                "endDay": 0,
+                "relay": 1
+            },
+            {
+                "start": "22:45:00",
+                "end": "23:00:00",
+                "endDay": 0,
+                "relay": 2
+            },
+            {
+                "start": "22:45:00",
+                "end": "23:00:00",
+                "endDay": 0,
+                "relay": 3
+            }
+        ],
+        "sunday": [
+            {
+                "start": "22:45:00",
+                "end": "23:00:00",
+                "endDay": 0,
+                "relay": 0
+            },
+            {
+                "start": "22:45:00",
+                "end": "23:00:00",
+                "endDay": 0,
+                "relay": 1
+            },
+            {
+                "start": "22:45:00",
+                "end": "23:00:00",
+                "endDay": 0,
+                "relay": 2
+            },
+            {
+                "start": "22:45:00",
+                "end": "23:00:00",
+                "endDay": 0,
+                "relay": 3
+            }
+        ]
+    }
+}

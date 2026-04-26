@@ -1,0 +1,21 @@
+# Plan Principal de Travail de AepBill - Type C
+
+## Phase 1: Mise en place de l'environnement (Setup)
+- [x] Création de la structure de dossiers (`main`, `build` habituels)
+- [x] Configuration des fichiers `CMakeLists.txt`
+- [x] **Checkpoint**: Environnement prêt, aucune erreur CMake au premier scan.
+
+## Phase 2: Structure du Code X
+- [x] Création du fichier `main/main.c` squelette
+- [x] Configuration du projet pour ESP32 WROOM (`idf.py set-target esp32`)
+- [x] **Checkpoint**: Compilation réussie d'un code vide ("Hello World").
+
+## Phase 3: Développement de la Logique Principale (Code X)
+- [x] Implémentation de la structure du code (setup, loop/tasks)
+- [ ] Ajout des fonctionnalités spécifiques (à définir selon besoins Code X)
+- [ ] **Checkpoint**: Le code compile sans erreur de syntaxe.
+
+## Phase 4: Téléversement et Validation (Upload)
+- [x] Connexion à la carte ESP32 WROOM
+- [x] Flashage (`idf.py flash monitor`)
+- [x] **Checkpoint**: Le code tourne sur la carte et affiche les logs attendus.
