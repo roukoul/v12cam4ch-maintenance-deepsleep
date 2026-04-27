@@ -3470,12 +3470,30 @@ static esp_err_t api_power_get_handler(httpd_req_t *req) {
 static esp_err_t api_power_post_handler(httpd_req_t *req) {
   if (!is_authorized) return ESP_FAIL;
 
-  char buf[256];
-  int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
-  if (ret <= 0) return ESP_FAIL;
-  buf[ret] = '\0';
+  int total_len = req->content_len;
+  if (total_len <= 0 || total_len >= 2048) {
+      return ESP_FAIL;
+  }
+
+  char *buf = malloc(total_len + 1);
+  if (!buf) {
+      return ESP_FAIL;
+  }
+
+  int received = 0;
+  while (received < total_len) {
+      int ret = httpd_req_recv(req, buf + received, total_len - received);
+      if (ret <= 0) {
+          if (ret == HTTPD_SOCK_ERR_TIMEOUT) continue;
+          free(buf);
+          return ESP_FAIL;
+      }
+      received += ret;
+  }
+  buf[total_len] = '\0';
 
   cJSON *root = cJSON_Parse(buf);
+  free(buf);
   if (!root) return ESP_FAIL;
 
   cJSON *m = cJSON_GetObjectItem(root, "mode");
