@@ -1,0 +1,140 @@
+// ========== NVS Calibration Functions ==========
+
+const adc_calibration_t *adc_get_calibration(void) { return &calibration; }
+
+void adc_set_calibration(const adc_calibration_t *new_cal) {
+  if (new_cal) {
+    calibration = *new_cal;
+    ESP_LOGI(TAG, "Calibration updated: zero=%.1f scale=%.3f valid=%d",
+             calibration.zero_offset, calibration.scale_factor,
+             calibration.is_valid);
+  }
+}
+
+esp_err_t adc_save_calibration(void) {
+  nvs_handle_t handle;
+  esp_err_t err = nvs_open("storage", NVS_READWRITE, &handle);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to open NVS for calibration save: %s",
+             esp_err_to_name(err));
+    return err;
+  }
+
+  err = nvs_set_blob(handle, "adc_calib", &calibration, sizeof(calibration));
+  if (err == ESP_OK) {
+    err = nvs_commit(handle);
+    ESP_LOGI(TAG, "Calibration saved to NVS: zero=%.1f scale=%.3f",
+             calibration.zero_offset, calibration.scale_factor);
+  } else {
+    ESP_LOGE(TAG, "Failed to save calibration: %s", esp_err_to_name(err));
+  }
+
+  nvs_close(handle);
+  return err;
+}
+
+esp_err_t adc_load_calibration(void) {
+  nvs_handle_t handle;
+  esp_err_t err = nvs_open("storage", NVS_READONLY, &handle);
+  if (err != ESP_OK) {
+    ESP_LOGW(TAG, "NVS not available (first boot?), using default calibration");
+    return err;
+  }
+
+  size_t required_size = sizeof(calibration);
+  adc_calibration_t temp;
+  err = nvs_get_blob(handle, "adc_calib", &temp, &required_size);
+
+  if (err == ESP_OK && temp.is_valid == 1) {
+    calibration = temp;
+    virtual_zero = calibration.zero_offset;  // Apply loaded zero
+    ESP_LOGI(TAG, "Calibration loaded from NVS: zero=%.1f scale=%.3f",
+             calibration.zero_offset, calibration.scale_factor);
+  } else {
+    ESP_LOGW(TAG, "No valid calibration in NVS, using defaults");
+  }
+
+  nvs_close(handle);
+  return err;
+}
+
+float adc_calibrate_zero(void) {
+  ESP_LOGI(TAG, "Starting zero calibration (500 samples)...");
+  long sum = 0;
+  const int samples = 500;
+
+  for (int i = 0; i < samples; i++) {
+    int raw;
+    adc_oneshot_read(adc_handle, CURRENT_SENSOR_CHANNEL, &raw);
+    sum += raw;
+    vTaskDelay(pdMS_TO_TICKS(1));
+  }
+
+  float new_zero = (float)sum / samples;
+  ESP_LOGI(TAG, "Zero calibration complete: %.1f (previous: %.1f)", new_zero,
+           virtual_zero);
+
+  // Update calibration structure
+  calibration.zero_offset = new_zero;
+  calibration.is_valid = 1;
+  virtual_zero = new_zero;
+
+  return new_zero;
+}
+
+// ========== NVS Thresholds Functions ==========
+
+esp_err_t adc_save_thresholds(void) {
+  nvs_handle_t handle;
+  esp_err_t err = nvs_open("storage", NVS_READWRITE, &handle);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to open NVS for threshold save: %s",
+             esp_err_to_name(err));
+    return err;
+  }
+
+  err = nvs_set_blob(handle, "adc_thresh", &thresholds, sizeof(thresholds));
+  if (err == ESP_OK) {
+    err = nvs_commit(handle);
+    ESP_LOGI(TAG, "Thresholds saved to NVS: min=%.2f anom=%.2f max=%.2f",
+             thresholds.min_load, thresholds.anomaly_threshold,
+             thresholds.max_critical);
+  } else {
+    ESP_LOGE(TAG, "Failed to save thresholds: %s", esp_err_to_name(err));
+  }
+
+  nvs_close(handle);
+  return err;
+}
+
+esp_err_t adc_load_thresholds(void) {
+  nvs_handle_t handle;
+  esp_err_t err = nvs_open("storage", NVS_READONLY, &handle);
+  if (err != ESP_OK) {
+    ESP_LOGW(TAG, "NVS not available, using default thresholds");
+    return err;
+  }
+
+  size_t required_size = sizeof(thresholds);
+  current_thresholds_t temp;
+  err = nvs_get_blob(handle, "adc_thresh", &temp, &required_size);
+
+  if (err == ESP_OK) {
+    // Validate thresholds
+    if (temp.min_load > 0 && temp.min_load < temp.anomaly_threshold &&
+        temp.anomaly_threshold < temp.max_critical &&
+        temp.max_critical <= 10.0f) {
+      thresholds = temp;
+      ESP_LOGI(TAG, "Thresholds loaded from NVS: min=%.2f anom=%.2f max=%.2f",
+               thresholds.min_load, thresholds.anomaly_threshold,
+               thresholds.max_critical);
+    } else {
+      ESP_LOGW(TAG, "Invalid thresholds in NVS, using defaults");
+    }
+  } else {
+    ESP_LOGW(TAG, "No thresholds in NVS, using defaults");
+  }
+
+  nvs_close(handle);
+  return err;
+}

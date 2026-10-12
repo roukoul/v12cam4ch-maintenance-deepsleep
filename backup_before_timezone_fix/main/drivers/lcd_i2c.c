@@ -1,0 +1,222 @@
+#include "lcd_i2c.h"
+#include <stdio.h>
+#include <string.h>
+#include <time.h>
+
+static const char *TAG = "LCD_I2C";
+static bool s_lcd_found = false;
+static uint8_t s_backlight_val = 0x08; // LCD_BACKLIGHT
+
+// PCF8574 Pin mapping (matches Arduino LiquidCrystal_I2C)
+#define LCD_RS 0x01 // P0
+#define LCD_RW 0x02 // P1
+#define LCD_EN 0x04 // P2
+#define LCD_BL 0x08 // P3
+
+// LCD Commands (from Arduino library)
+#define LCD_CLEARDISPLAY 0x01
+#define LCD_RETURNHOME 0x02
+#define LCD_ENTRYMODESET 0x04
+#define LCD_DISPLAYCONTROL 0x08
+#define LCD_FUNCTIONSET 0x20
+#define LCD_SETDDRAMADDR 0x80
+
+// Flags for display entry mode
+#define LCD_ENTRYRIGHT 0x00
+#define LCD_ENTRYLEFT 0x02
+
+// Flags for display on/off control
+#define LCD_DISPLAYON 0x04
+#define LCD_CURSOROFF 0x00
+#define LCD_BLINKOFF 0x00
+
+// Flags for function set
+#define LCD_4BITMODE 0x00
+#define LCD_2LINE 0x08
+#define LCD_5x8DOTS 0x00
+
+// LOW LEVEL FUNCTIONS (copied from Arduino)
+static void expander_write(uint8_t data) {
+  if (!s_lcd_found)
+    return;
+
+  uint8_t val = data | s_backlight_val;
+  i2c_manager_write(I2C_ADDR_LCD, &val, 1);
+}
+
+static void pulse_enable(uint8_t data) {
+  expander_write(data | LCD_EN);  // EN high
+  esp_rom_delay_us(1);            // enable pulse must be >450ns
+  expander_write(data & ~LCD_EN); // EN low
+  esp_rom_delay_us(50);           // commands need >37us to settle
+}
+
+static void write_4bits(uint8_t value) {
+  expander_write(value);
+  pulse_enable(value);
+}
+
+static void send(uint8_t value, uint8_t mode) {
+  uint8_t highnib = value & 0xF0;
+  uint8_t lownib = (value << 4) & 0xF0;
+  write_4bits(highnib | mode);
+  write_4bits(lownib | mode);
+}
+
+static void lcd_command(uint8_t cmd) { send(cmd, 0); }
+
+static void lcd_write(uint8_t data) { send(data, LCD_RS); }
+
+// PUBLIC FUNCTIONS
+esp_err_t lcd_init(void) {
+  // Check device
+  if (i2c_manager_check_device(I2C_ADDR_LCD)) {
+    ESP_LOGI(TAG, "LCD found at 0x%02X", I2C_ADDR_LCD);
+    s_lcd_found = true;
+  } else {
+    ESP_LOGW(TAG, "LCD NOT found at 0x%02X", I2C_ADDR_LCD);
+    s_lcd_found = false;
+    return ESP_ERR_NOT_FOUND;
+  }
+
+  // Arduino begin() sequence - EXACT COPY
+  ESP_LOGI(TAG, "Starting LCD init (Arduino compatible)...");
+
+  vTaskDelay(pdMS_TO_TICKS(50)); // wait >40ms after power rises
+
+  // Reset expander and turn backlight off
+  expander_write(s_backlight_val);
+  vTaskDelay(pdMS_TO_TICKS(1000)); // Arduino uses delay(1000)
+
+  // Put LCD into 4-bit mode (HD44780 datasheet figure 24, pg 46)
+  write_4bits(0x03 << 4);
+  esp_rom_delay_us(4500); // wait min 4.1ms
+
+  write_4bits(0x03 << 4);
+  esp_rom_delay_us(4500); // wait min 4.1ms
+
+  write_4bits(0x03 << 4);
+  esp_rom_delay_us(150);
+
+  // Finally, set to 4-bit interface
+  write_4bits(0x02 << 4);
+
+  // Function set: 4-bit mode, 2 lines, 5x8 font
+  lcd_command(LCD_FUNCTIONSET | LCD_4BITMODE | LCD_2LINE | LCD_5x8DOTS);
+
+  // Display control: display on, cursor off, blink off
+  lcd_command(LCD_DISPLAYCONTROL | LCD_DISPLAYON | LCD_CURSOROFF |
+              LCD_BLINKOFF);
+
+  // Clear display
+  lcd_command(LCD_CLEARDISPLAY);
+  esp_rom_delay_us(2000); // this command takes long time
+
+  // Entry mode: left to right
+  lcd_command(LCD_ENTRYMODESET | LCD_ENTRYLEFT);
+
+  // Home
+  lcd_command(LCD_RETURNHOME);
+  esp_rom_delay_us(2000);
+
+  ESP_LOGI(TAG, "LCD init complete");
+  return ESP_OK;
+}
+
+void lcd_clear(void) {
+  lcd_command(LCD_CLEARDISPLAY);
+  esp_rom_delay_us(2000);
+}
+
+void lcd_set_cursor(uint8_t row, uint8_t col) {
+  int row_offsets[] = {0x00, 0x40, 0x14, 0x54};
+  if (row > 1)
+    row = 1;
+  lcd_command(LCD_SETDDRAMADDR | (col + row_offsets[row]));
+}
+
+void lcd_print(const char *str) {
+  while (*str) {
+    lcd_write((uint8_t)*str++);
+  }
+}
+
+void lcd_backlight(bool on) {
+  s_backlight_val = on ? LCD_BL : 0x00;
+  expander_write(0);
+}
+
+// Test function
+void lcd_test_display(void) {
+  if (!s_lcd_found)
+    return;
+
+  lcd_clear();
+  vTaskDelay(pdMS_TO_TICKS(100));
+
+  lcd_set_cursor(0, 0);
+  lcd_print("0123456789ABCDEF");
+
+  lcd_set_cursor(1, 0);
+  lcd_print("Test LCD...     ");
+}
+
+void lcd_update_display(int day, int mon, int hour, int min, int sec,
+                        const char *status_line, bool wifi_synced) {
+  if (!s_lcd_found)
+    return;
+
+  (void)wifi_synced; // Could add icon later
+
+  char buf[32];
+
+  // Line 1: "HH:MM:SS DD/MM" (16 chars)
+  snprintf(buf, sizeof(buf), "%02d:%02d:%02d %02d/%02d  ", hour, min, sec, day,
+           mon);
+  buf[16] = '\0';
+  lcd_set_cursor(0, 0);
+  lcd_print(buf);
+
+  // Line 2: Status Line
+  if (status_line) {
+    char line2[17];
+    snprintf(line2, sizeof(line2), "%-16s", status_line);
+    // Pad with spaces if needed
+    lcd_set_cursor(1, 0);
+    lcd_print(line2);
+  }
+}
+
+/**
+ * @brief Display IP address for 10 seconds at startup
+ * @param ip_str IP address string (e.g. "192.168.1.100")
+ * @param is_ap true if Access Point mode, false if WiFi Station mode
+ */
+void lcd_show_ip_address(const char *ip_str, bool is_ap) {
+  if (!s_lcd_found || !ip_str)
+    return;
+
+  lcd_clear();
+
+  // Ligne 1: Afficher le mode
+  lcd_set_cursor(0, 0);
+  if (is_ap) {
+    lcd_print("IP AP:");
+  } else {
+    lcd_print("IP WiFi:");
+  }
+
+  // Ligne 2: Afficher l'IP (max 16 caractères)
+  char ip_display[17];
+  snprintf(ip_display, sizeof(ip_display), "%-16s", ip_str);
+  ip_display[16] = '\0';
+
+  lcd_set_cursor(1, 0);
+  lcd_print(ip_display);
+
+  // Attendre 10 secondes
+  vTaskDelay(pdMS_TO_TICKS(10000));
+
+  // Effacer l'écran après 10 secondes
+  lcd_clear();
+}

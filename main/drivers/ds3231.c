@@ -1,7 +1,9 @@
-#define _POSIX_C_SOURCE 200809L
-#include "ds3231.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/time.h>
 #include <time.h>
+#include "ds3231.h"
 
 static const char *TAG = "DS3231";
 static bool s_rtc_found = false;
@@ -78,8 +80,17 @@ void ds3231_sync_from_system(void) {
   struct tm t;
   time(&now);
   localtime_r(&now, &t);
-  if (ds3231_set_time(&t) == ESP_OK) {
-    ESP_LOGI(TAG, "RTC synced from System time");
+  if (t.tm_year >= (2020 - 1900)) {
+    if (ds3231_set_time(&t) == ESP_OK) {
+      ESP_LOGI(TAG,
+               "RTC synced from System time: %04d-%02d-%02d %02d:%02d:%02d",
+               t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min,
+               t.tm_sec);
+    }
+  } else {
+    ESP_LOGW(TAG,
+             "Skipping RTC sync from system: system time not yet valid (%d)",
+             t.tm_year + 1900);
   }
 }
 

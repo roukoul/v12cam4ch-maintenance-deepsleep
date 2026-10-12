@@ -503,11 +503,16 @@ void app_main(void) {
   // que l'heure locale stockée dans le RTC génère la bonne heure UTC interne.
   char timezone[64] = {0};
   if (nvs_read_string("timezone", timezone, sizeof(timezone)) == ESP_OK && strlen(timezone) > 0) {
+    if (strstr(timezone, "WET-0WEST") != NULL) {
+      strcpy(timezone, "GMT0");
+      nvs_write_string("timezone", "GMT0");
+      ESP_LOGI(TAG, "Migrated obsolete Morocco timezone rule to GMT0");
+    }
     ESP_LOGI(TAG, "Setting timezone from NVS: %s", timezone);
     setenv("TZ", timezone, 1);
   } else {
-    ESP_LOGW(TAG, "Timezone not set in NVS, using default CET-1");
-    setenv("TZ", "CET-1", 1);
+    ESP_LOGW(TAG, "Timezone not set in NVS, using default GMT0 (Morocco/GMT)");
+    setenv("TZ", "GMT0", 1);
   }
   tzset();
   ESP_LOGI(TAG, "[1b/7] Timezone applied globally");

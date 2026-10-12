@@ -719,13 +719,19 @@ static esp_err_t root_get_handler(httpd_req_t *req) {
   httpd_resp_sendstr_chunk(
       req,
       "<div class='card' style='margin:20px 0;text-align:right'>"
-      "<h3>⏰ ضبط الوقت يدوياً</h3>"
+      "<h3>⏰ ضبط الوقت والساعة</h3>"
+      "<button type='button' id='syncDevBtn' "
+      "style='background:linear-gradient(135deg,#2980b9,#3498db);color:white;padding:12px 16px;"
+      "border:none;border-radius:8px;font-weight:bold;cursor:pointer;width:100%;margin-bottom:15px;"
+      "font-size:1rem;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 3px 6px rgba(0,0,0,0.15)'>"
+      "🔄 مزامنة فورية مع وقت جهازي (الهاتف / الحاسوب)"
+      "</button>"
       "<form id='timeForm' method='POST' action='/setDateTime' "
       "style='display:grid;gap:10px;direction:rtl'>"
       "<div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;'>"
       "<div style='text-align:center'><label "
       "style='font-size:0.8rem;display:block'>السنة</label><input "
-      "type='number' id='year' min='2000' max='2099' value='2025' "
+      "type='number' id='year' min='2000' max='2099' value='2026' "
       "style='padding:8px;width:100%'></div>"
       "<div style='text-align:center'><label "
       "style='font-size:0.8rem;display:block'>الشهر</label><input "
@@ -748,34 +754,50 @@ static esp_err_t root_get_handler(httpd_req_t *req) {
       "<div style='display:flex;align-items:flex-end'><button type='submit' "
       "style='background:var(--success-gradient);color:white;padding:12px;"
       "border:none;border-radius:8px;font-weight:bold;cursor:pointer;width:100%"
-      "%'>حفظ الوقت</button></div>"
+      "%'>حفظ التعديل اليدوي</button></div>"
       "</div></form><div id='timeResult' "
-      "style='margin-top:10px;font-size:0.9rem'></div></div>"
+      "style='margin-top:10px;font-size:0.95rem;text-align:center'></div></div>"
       "<script>"
-      "document.getElementById('timeForm').onsubmit = function(e){"
-      "e.preventDefault();"
-      "var "
-      "d={year:parseInt(document.getElementById('year').value),month:parseInt("
-      "document.getElementById('month').value),day:parseInt(document."
-      "getElementById('day').value),hour:parseInt(document.getElementById('"
-      "hour').value),minute:parseInt(document.getElementById('minute').value),"
-      "second:0};"
+      "function sendDateTimeData(d, waitMsg){"
       "var res=document.getElementById('timeResult');"
-      "res.innerHTML='⏳ جاري الإعداد...';"
-      "fetch('/"
-      "setDateTime',{method:'POST',headers:{'Content-Type':'application/"
-      "json'},body:JSON.stringify(d)}).then(function(r){"
+      "res.innerHTML='⏳ '+waitMsg;"
+      "fetch('/setDateTime',{method:'POST',headers:{'Content-Type':'application/json'},"
+      "body:JSON.stringify(d)}).then(function(r){"
       "if(!r.ok) throw new Error('Status '+r.status); return r.json();"
-      "}).then(function(data){res.innerHTML='<span style=\"color:green\">✅ تم "
-      "الحفظ بنجاح</span>';setTimeout(function(){location.reload();},1500);"
-      "}).catch(function(err){res.innerHTML='<span style=\"color:red\">❌ خطأ: "
-      "'+err.message+'</span>';});"
-      "return false; };"
-      "(function(){var n=new "
-      "Date();document.getElementById('year').value=n.getFullYear();document."
-      "getElementById('month').value=n.getMonth()+1;document.getElementById('"
-      "day').value=n.getDate();document.getElementById('hour').value=n."
-      "getHours();document.getElementById('minute').value=n.getMinutes();})();"
+      "}).then(function(data){"
+      "res.innerHTML='<span style=\"color:#27ae60;font-weight:bold;\">✅ تم ضبط الوقت وتحديث الساعة بنجاح!</span>';"
+      "setTimeout(function(){location.reload();},1200);"
+      "}).catch(function(err){"
+      "res.innerHTML='<span style=\"color:#e74c3c;font-weight:bold;\">❌ خطأ: '+err.message+'</span>';"
+      "});"
+      "}"
+      "document.getElementById('syncDevBtn').onclick=function(){"
+      "var now=new Date();"
+      "var d={year:now.getFullYear(),month:now.getMonth()+1,day:now.getDate(),"
+      "hour:now.getHours(),minute:now.getMinutes(),second:now.getSeconds(),"
+      "tz_offset:now.getTimezoneOffset()};"
+      "sendDateTimeData(d,'جاري المزامنة الفورية مع جهازك...');"
+      "};"
+      "document.getElementById('timeForm').onsubmit=function(e){"
+      "e.preventDefault();"
+      "var now=new Date();"
+      "var d={year:parseInt(document.getElementById('year').value),"
+      "month:parseInt(document.getElementById('month').value),"
+      "day:parseInt(document.getElementById('day').value),"
+      "hour:parseInt(document.getElementById('hour').value),"
+      "minute:parseInt(document.getElementById('minute').value),"
+      "second:now.getSeconds(),"
+      "tz_offset:now.getTimezoneOffset()};"
+      "sendDateTimeData(d,'جاري حفظ التعديل اليدوي...');"
+      "return false;"
+      "};"
+      "(function(){var n=new Date();"
+      "document.getElementById('year').value=n.getFullYear();"
+      "document.getElementById('month').value=n.getMonth()+1;"
+      "document.getElementById('day').value=n.getDate();"
+      "document.getElementById('hour').value=n.getHours();"
+      "document.getElementById('minute').value=n.getMinutes();"
+      "})();"
       "</script>");
 
   // Navigation
@@ -2178,22 +2200,26 @@ static esp_err_t timezone_config_get_handler(httpd_req_t *req) {
   httpd_resp_sendstr_chunk(req, "<label>اختر المنطقة الزمنية:</label>");
   char current_tz[64] = {0};
   nvs_read_string("timezone", current_tz, sizeof(current_tz));
-  if (strlen(current_tz) == 0) {
-    strcpy(current_tz, "CET-1");
+  if (strlen(current_tz) == 0 || strstr(current_tz, "WET-0WEST") != NULL) {
+    strcpy(current_tz, "GMT0");
   }
 
-  httpd_resp_sendstr_chunk(req, "<select name='timezone'>");
+  httpd_resp_sendstr_chunk(req, "<select name='timezone' style='padding:10px;width:100%;font-size:1rem;border-radius:8px;border:1px solid #ccc;margin:10px 0;'>");
   
-  char buf[512];
+  char buf[700];
   snprintf(buf, sizeof(buf), 
-           "<option value='CET-1' %s>GMT+1 (CET)</option>"
-           "<option value='GMT0' %s>GMT+0</option>"
-           "<option value='WET-0WEST,M3.5.0/0,M10.5.0/0' %s>المغرب (توقيت صيفي)</option>"
-           "<option value='EET-2' %s>GMT+2 (EET)</option>",
-           strcmp(current_tz, "CET-1") == 0 ? "selected" : "",
-           strcmp(current_tz, "GMT0") == 0 ? "selected" : "",
-           strcmp(current_tz, "WET-0WEST,M3.5.0/0,M10.5.0/0") == 0 ? "selected" : "",
-           strcmp(current_tz, "EET-2") == 0 ? "selected" : "");
+           "<option value='GMT0' %s>🇲🇦 المغرب / توقيت غرينتش الرسمي (GMT+0)</option>"
+           "<option value='CET-1' %s>🇲🇦 المغرب / التوقيت الصيفي (GMT+1)</option>"
+           "<option value='GMT0' %s>🌍 توقيت غرينتش العالمي (GMT+0)</option>"
+           "<option value='CET-1' %s>🌍 وسط أوروبا (GMT+1)</option>"
+           "<option value='EET-2' %s>🌍 شرق أوروبا / القاهرة (GMT+2)</option>"
+           "<option value='AST-3' %s>🕋 مكة المكرمة / السعودية (GMT+3)</option>",
+           (strcmp(current_tz, "GMT0") == 0) ? "selected" : "",
+           (strcmp(current_tz, "CET-1") == 0) ? "selected" : "",
+           "",
+           "",
+           (strcmp(current_tz, "EET-2") == 0) ? "selected" : "",
+           (strcmp(current_tz, "AST-3") == 0) ? "selected" : "");
   httpd_resp_sendstr_chunk(req, buf);
   httpd_resp_sendstr_chunk(req, "</select><br>");
   httpd_resp_sendstr_chunk(req, "<input type='submit' value='حفظ'>");
@@ -2251,17 +2277,13 @@ static esp_err_t timezone_config_post_handler(httpd_req_t *req) {
     return httpd_resp_send(req, html, strlen(html));
   }
 
-  // Apply timezone immediately
-  char tz_env[128];
-  snprintf(tz_env, sizeof(tz_env), "TZ=%s", timezone);
-  putenv(tz_env);
+  // Apply timezone immediately using setenv (heap copy in libc, stack-safe)
+  setenv("TZ", timezone, 1);
   tzset();
 
-  // NOUVEAU: Maintient l'heure locale intacte et ajuste l'UTC en arrière-plan
-  // Comme le RTC stocke l'heure locale, on resynchronise le système depuis le RTC 
-  // pour recalculer l'heure UTC correcte avec la nouvelle Timezone.
-  extern void ds3231_sync_to_system(void);
-  ds3231_sync_to_system();
+  // Mettre à jour l'heure locale et le DS3231 avec la nouvelle timezone
+  extern void ds3231_sync_from_system(void);
+  ds3231_sync_from_system();
 
   ESP_LOGI(TAG, "Timezone saved to NVS and applied: %s", timezone);
 
@@ -2492,8 +2514,8 @@ static esp_err_t settings_api_get_handler(httpd_req_t *req) {
   // Timezone
   char timezone[64] = {0};
   nvs_read_string("timezone", timezone, sizeof(timezone));
-  if (strlen(timezone) == 0)
-    strcpy(timezone, "CET-1"); // Default
+  if (strlen(timezone) == 0 || strstr(timezone, "WET-0WEST") != NULL)
+    strcpy(timezone, "GMT0"); // Default
   cJSON_AddStringToObject(root, "timezone", timezone);
 
   // Thresholds
@@ -3738,17 +3760,42 @@ static esp_err_t set_datetime_handler(httpd_req_t *req) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No data received");
         return ESP_FAIL;
     }
-    
     content[received] = '\0';
     
-    int year = 0, month = 0, day = 0, hour = 0, minute = 0, second = 0;
-    
-    if (sscanf(content, "{\"year\":%d,\"month\":%d,\"day\":%d,\"hour\":%d,\"minute\":%d,\"second\":%d}",
-               &year, &month, &day, &hour, &minute, &second) != 6) {
+    cJSON *root = cJSON_Parse(content);
+    if (!root) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON format");
         return ESP_FAIL;
     }
-    
+
+    cJSON *item;
+    int year = ((item = cJSON_GetObjectItem(root, "year")) && cJSON_IsNumber(item)) ? item->valueint : 2026;
+    int month = ((item = cJSON_GetObjectItem(root, "month")) && cJSON_IsNumber(item)) ? item->valueint : 1;
+    int day = ((item = cJSON_GetObjectItem(root, "day")) && cJSON_IsNumber(item)) ? item->valueint : 1;
+    int hour = ((item = cJSON_GetObjectItem(root, "hour")) && cJSON_IsNumber(item)) ? item->valueint : 0;
+    int minute = ((item = cJSON_GetObjectItem(root, "minute")) && cJSON_IsNumber(item)) ? item->valueint : 0;
+    int second = ((item = cJSON_GetObjectItem(root, "second")) && cJSON_IsNumber(item)) ? item->valueint : 0;
+
+    cJSON *tz_item = cJSON_GetObjectItem(root, "tz_offset");
+    if (tz_item && cJSON_IsNumber(tz_item)) {
+        int offset = tz_item->valueint; // 0 = GMT0, -60 = GMT+1
+        const char *target_tz = NULL;
+        if (offset == 0) {
+            target_tz = "GMT0";
+        } else if (offset == -60) {
+            target_tz = "CET-1";
+        } else if (offset == -120) {
+            target_tz = "EET-2";
+        }
+        if (target_tz) {
+            nvs_write_string("timezone", target_tz);
+            setenv("TZ", target_tz, 1);
+            tzset();
+            ESP_LOGI(TAG, "Timezone synced with client device (offset %d min -> %s)", offset, target_tz);
+        }
+    }
+    cJSON_Delete(root);
+
     if (year < 2000 || year > 2099 || month < 1 || month > 12 || 
         day < 1 || day > 31 || hour < 0 || hour > 23 || 
         minute < 0 || minute > 59 || second < 0 || second > 59) {
@@ -3778,7 +3825,7 @@ static esp_err_t set_datetime_handler(httpd_req_t *req) {
     
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, "{\"status\":\"ok\",\"message\":\"Time set successfully\"}");
-    
+    ESP_LOGI("HTTP_SRV", "Manual time set: %04d-%02d-%02d %02d:%02d:%02d", year, month, day, hour, minute, second);
     return ESP_OK;
 }
 

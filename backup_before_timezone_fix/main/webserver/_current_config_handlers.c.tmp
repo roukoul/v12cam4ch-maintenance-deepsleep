@@ -1,0 +1,184 @@
+// ========== Current Config Handlers (Phase 1.F - NVS Calibration) ==========
+static esp_err_t current_config_get_handler(httpd_req_t *req) {
+  if (!is_authorized) {
+    httpd_resp_set_status(req, "302 Found");
+    httpd_resp_set_hdr(req, "Location", "/");
+    return httpd_resp_send(req, NULL, 0);
+  }
+
+  // Get current calibration and thresholds
+  const adc_calibration_t *calib = adc_get_calibration();
+  const current_thresholds_t *thresh = adc_get_thresholds();
+
+  httpd_resp_set_type(req, "text/html; charset=UTF-8");
+  httpd_resp_sendstr_chunk(req, "<!DOCTYPE html><html lang='ar' dir='rtl'><head>");
+  httpd_resp_sendstr_chunk(req, "<meta charset='UTF-8'>");
+  httpd_resp_sendstr_chunk(req, HTML_STYLE);
+  httpd_resp_sendstr_chunk(req, "</head><body><div class='container'>");
+
+  // Card Start
+  httpd_resp_sendstr_chunk(req, "<div class='card' style='max-width:600px;margin:0 auto'>");
+  httpd_resp_sendstr_chunk(req, "<span class='card-icon' style='color:#3498db'>⚙️</span>");
+  httpd_resp_sendstr_chunk(req, "<h2>إعدادات مستشعر التيار</h2>");
+
+  // Info box
+  char buf[256];
+  snprintf(buf, sizeof(buf),
+           "<div style='background:#e8f4f8;padding:12px;border-radius:8px;margin:15px 0'>"
+           "<p style='margin:0;color:#2980b9'><strong>📊 الحالة الحالية:</strong></p>"
+           "<p style='margin:5px 0'>النقطة الصفرية: <strong>%.1f</strong> (متوقع ~2048)</p>"
+           "<p style='margin:5px 0'>عامل التعديل: <strong>%.3f</strong></p>"
+           "<p style='margin:0'>الحالة: %s</p></div>",
+           calib->zero_offset, calib->scale_factor,
+           (calib->is_valid == 1) ? "✅ محفوظ" : "⚠️ افتراضي");
+  httpd_resp_sendstr_chunk(req, buf);
+
+  // Form Start
+  httpd_resp_sendstr_chunk(req, "<form action='/currentConfig' method='POST' style='text-align:right'>");
+
+  // Scale Factor Input
+  snprintf(buf, sizeof(buf),
+           "<label style='display:block;margin:15px 0 5px'>عامل التصحيح (Scale Factor):</label>"
+           "<input type='number' name='scale' step='0.001' min='0.5' max='1.5' "
+           "value='%.3f' style='width:100%%' required>",
+           calib->scale_factor);
+  httpd_resp_sendstr_chunk(req, buf);
+
+  // Thresholds Section
+  httpd_resp_sendstr_chunk(req, "<h3 style='margin-top:25px;color:#2c3e50'>🎚️ العتبات</h3>");
+
+  // Min Load
+  snprintf(buf, sizeof(buf),
+           "<label style='display:block;margin:15px 0 5px'>الحد الأدنى للحمل (A):</label>"
+           "<input type='number' name='min_load' step='0.01' min='0.01' max='10' "
+           "value='%.2f' style='width:100%%' required>",
+           thresh->min_load);
+  httpd_resp_sendstr_chunk(req, buf);
+
+  // Anomaly Threshold
+  snprintf(buf, sizeof(buf),
+           "<label style='display:block;margin:15px 0 5px'>عتبة التسرب (A):</label>"
+           "<input type='number' name='anomaly' step='0.01' min='0.01' max='10' "
+           "value='%.2f' style='width:100%%' required>",
+           thresh->anomaly_threshold);
+  httpd_resp_sendstr_chunk(req, buf);
+
+  // Max Critical
+  snprintf(buf, sizeof(buf),
+           "<label style='display:block;margin:15px 0 5px'>الحد الأقصى الحرج (A):</label>"
+           "<input type='number' name='max_critical' step='0.01' min='0.01' max='10' "
+           "value='%.2f' style='width:100%%' required>",
+           thresh->max_critical);
+  httpd_resp_sendstr_chunk(req, buf);
+
+  // Save Button
+  httpd_resp_sendstr_chunk(req, "<input type='submit' value='حفظ الإعدادات' "
+                                "style='margin-top:25px;width:100%;font-size:1.1rem;font-weight:bold'>");
+  httpd_resp_sendstr_chunk(req, "</form>");
+
+  // Recalibrate Zero Button
+  httpd_resp_sendstr_chunk(req, "<form action='/recalibrateZero' method='POST' style='margin-top:15px'>");
+  httpd_resp_sendstr_chunk(req, "<input type='submit' value='🔄 إعادة معايرة الصفر' "
+                                "style='width:100%;background:#f39c12;font-weight:bold'>");
+  httpd_resp_sendstr_chunk(req, "</form>");
+
+  // Warning Note
+  httpd_resp_sendstr_chunk(req, "<p style='color:#856404;font-size:0.85rem;text-align:center;margin-top:15px'>"
+                                "⚠️ تأكد من فصل الحمل قبل إعادة المعايرة</p>");
+
+  httpd_resp_sendstr_chunk(req, "</div>"); // Close Card
+
+  // Navigation
+  httpd_resp_sendstr_chunk(req, "<div class='nav-menu' style='margin-top:20px'><a href='/'>العودة</a></div>");
+  httpd_resp_sendstr_chunk(req, "</div></body></html>");
+
+  return httpd_resp_sendstr_chunk(req, NULL);
+}
+
+static esp_err_t current_config_post_handler(httpd_req_t *req) {
+  if (!is_authorized) {
+    httpd_resp_set_status(req, "302 Found");
+    httpd_resp_set_hdr(req, "Location", "/");
+    return httpd_resp_send(req, NULL, 0);
+  }
+
+  char buf[512];
+  int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
+  if (ret <= 0) {
+    return ESP_FAIL;
+  }
+  buf[ret] = '\0';
+
+  // Parse form data
+  float scale = 1.0f, min_load = 0.08f, anomaly = 0.60f, max_critical = 4.0f;
+  char temp[32];
+
+  if (httpd_query_key_value(buf, "scale", temp, sizeof(temp)) == ESP_OK) {
+    scale = atof(temp);
+  }
+  if (httpd_query_key_value(buf, "min_load", temp, sizeof(temp)) == ESP_OK) {
+    min_load = atof(temp);
+  }
+  if (httpd_query_key_value(buf, "anomaly", temp, sizeof(temp)) == ESP_OK) {
+    anomaly = atof(temp);
+  }
+  if (httpd_query_key_value(buf, "max_critical", temp, sizeof(temp)) == ESP_OK) {
+    max_critical = atof(temp);
+  }
+
+  // Validate thresholds
+  if (min_load <= 0 || min_load >= anomaly || anomaly >= max_critical || max_critical > 10) {
+    const char *error_html = "<!DOCTYPE html><html><body><h1>خطأ</h1>"
+                             "<p>القيم غير صحيحة. يجب أن يكون: min < anomaly < max <= 10</p>"
+                             "<a href='/currentConfig'>عودة</a></body></html>";
+    return httpd_resp_send(req, error_html, strlen(error_html));
+  }
+
+  // Update calibration
+  const adc_calibration_t *current_calib = adc_get_calibration();
+  adc_calibration_t new_calib = *current_calib;
+  new_calib.scale_factor = scale;
+  new_calib.is_valid = 1;
+  adc_set_calibration(&new_calib);
+  adc_save_calibration();
+
+  // Update thresholds
+  current_thresholds_t new_thresh = {
+    .min_load = min_load,
+    .anomaly_threshold = anomaly,
+    .max_critical = max_critical
+  };
+  adc_set_thresholds(&new_thresh);
+  adc_save_thresholds();
+
+  // Success redirect
+  httpd_resp_set_status(req, "302 Found");
+  httpd_resp_set_hdr(req, "Location", "/");
+  return httpd_resp_send(req, NULL, 0);
+}
+
+static esp_err_t recalibrate_zero_handler(httpd_req_t *req) {
+  if (!is_authorized) {
+    httpd_resp_set_status(req, "302 Found");
+    httpd_resp_set_hdr(req, "Location", "/");
+    return httpd_resp_send(req, NULL, 0);
+  }
+
+  // Perform recalibration
+  float new_zero = adc_calibrate_zero();
+  adc_save_calibration();
+
+  // Show confirmation page
+  char html[512];
+  snprintf(html, sizeof(html),
+           "<!DOCTYPE html><html lang='ar' dir='rtl'><head>"
+           "<meta charset='UTF-8'><meta http-equiv='refresh' content='3;url=/'></head>"
+           "<body style='text-align:center;padding:50px'>"
+           "<h1>✅ تمت المعايرة</h1>"
+           "<p>النقطة الصفرية الجديدة: <strong>%.1f</strong></p>"
+           "<p>جاري العودة إلى الصفحة الرئيسية...</p></body></html>",
+           new_zero);
+
+  return httpd_resp_send(req, html, strlen(html));
+}
+
