@@ -7,13 +7,10 @@
  */
 
 #include "http_server.h"
+#include "i18n.h"
+#include "predictive_maintenance.h"
+#include "power_manager.h"
 #include "../drivers/adc_driver.h"
-// TODO: Energy Management related tasks:
-// - [x] Update `alarm_manager.c` to coordinate with Power Manager
-// - [x] Update /api/power to include Power Mode configurations
-// - [x] Update Web Dashboard UI with "Energy Management" section
-// - [ ] Update Android App with "Energy Settings" screen
-// - [x] Implement Fail-Safe logic (RTC Battery check and internal Timer fallback)
 #include "alarm_manager.h"
 #include "esp_http_client.h"
 #include "esp_http_server.h"
@@ -26,10 +23,8 @@
 #include <ctype.h>     // For isdigit
 #include <stdlib.h>    // For setenv
 #include <string.h>
-#include <strings.h>   // For strcasecmp
 #include <sys/time.h>
 #include <time.h>
-#include <unistd.h>    // For putenv
 
 // OTA includes
 #include "../logging.h"
@@ -84,8 +79,13 @@ const char *HTML_STYLE =
     "@keyframes pulse-orange { 0%,100% {opacity:1;transform:scale(1)} 50% "
     "{opacity:0.8;transform:scale(1.05)} }"
     "*{margin:0;padding:0;box-sizing:border-box;}"
-    "body{font-family:'Cairo',sans-serif;background:var(--primary-gradient);"
-    "min-height:100vh;padding:15px;direction:rtl;}"
+    "body{background:var(--primary-gradient);min-height:100vh;padding:15px;}"
+    "html[dir='rtl'] body{direction:rtl;font-family:'Cairo','Tajawal',sans-serif;text-align:right;}"
+    "html[dir='ltr'] body{direction:ltr;font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;text-align:left;}"
+    ".lang-bar{display:flex;justify-content:center;gap:8px;margin-bottom:15px;background:rgba(255,255,255,0.15);padding:6px;border-radius:12px;backdrop-filter:blur(5px);}"
+    ".lang-btn{background:rgba(255,255,255,0.85);border:none;border-radius:8px;padding:6px 14px;font-size:0.9rem;font-weight:600;cursor:pointer;color:#333;transition:all 0.2s ease;}"
+    ".lang-btn:hover{background:#fff;transform:translateY(-1px);}"
+    ".lang-btn.active{background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;box-shadow:0 2px 8px rgba(0,0,0,0.2);}"
     ".container{max-width:800px;margin:0 "
     "auto;background:rgba(255,255,255,0.98);"
     "border-radius:20px;padding:25px;box-shadow:0 10px 30px "
@@ -233,8 +233,11 @@ static const char *HTML_CONF_STYLE =
 // Helper to send confirmation page header
 void send_conf_header(httpd_req_t *req, const char *title,
                       const char *redirect_url, int delay_sec) {
-  httpd_resp_sendstr_chunk(req,
-                           "<!DOCTYPE html><html lang='ar' dir='rtl'><head>");
+  app_lang_t lang = i18n_get_req_lang(req);
+  char html_open[128];
+  snprintf(html_open, sizeof(html_open), "<!DOCTYPE html><html lang='%s' dir='%s'><head>",
+           i18n_code(lang), i18n_dir(lang));
+  httpd_resp_sendstr_chunk(req, html_open);
   httpd_resp_sendstr_chunk(req, "<meta charset='UTF-8'>");
   httpd_resp_sendstr_chunk(
       req,
@@ -289,26 +292,37 @@ void send_conf_header(httpd_req_t *req, const char *title,
 
 // ========== Login Page Handler ==========
 static esp_err_t login_get_handler(httpd_req_t *req) {
+  app_lang_t lang = i18n_get_req_lang(req);
   httpd_resp_set_type(req, "text/html; charset=UTF-8");
 
-  httpd_resp_sendstr_chunk(req,
-                           "<!DOCTYPE html><html lang='ar' dir='rtl'><head>");
+  char html_open[128];
+  snprintf(html_open, sizeof(html_open), "<!DOCTYPE html><html lang='%s' dir='%s'><head>",
+           i18n_code(lang), i18n_dir(lang));
+  httpd_resp_sendstr_chunk(req, html_open);
   httpd_resp_sendstr_chunk(req,
                            "<meta charset='UTF-8'><meta name='viewport' "
                            "content='width=device-width,initial-scale=1.0'>");
-  httpd_resp_sendstr_chunk(req,
-                           "<title>نظام التحكم اللاسلكي الاتوماتيكي</title>");
+  char title_buf[256];
+  snprintf(title_buf, sizeof(title_buf), "<title>%s</title>", i18n_tr(STR_APP_TITLE, lang));
+  httpd_resp_sendstr_chunk(req, title_buf);
   httpd_resp_sendstr_chunk(req, HTML_STYLE);
   httpd_resp_sendstr_chunk(req, "</head><body><div class='container'>");
-  httpd_resp_sendstr_chunk(req, "<h1>نظام التحكم اللاسلكي الاتوماتيكي</h1>");
-  httpd_resp_sendstr_chunk(req,
-                           "<p style='color:#e74c3c;font-weight:bold;font-size:0.9rem;text-align:center;margin-top:-10px;margin-bottom:20px;font-family:\"Cairo\",\"Tajawal\",sans-serif;'>"
-                           "إعداد و تجميع الاستاذ الدادسي احمد استاذ الفيزياء و الكيمياء ثانوية تنزرت التأهيلية مديرية تارودانت"
-                           "</p>");
+  i18n_send_lang_bar(req, lang);
+  char h1_buf[256];
+  snprintf(h1_buf, sizeof(h1_buf), "<h1>%s</h1>", i18n_tr(STR_APP_TITLE, lang));
+  httpd_resp_sendstr_chunk(req, h1_buf);
+  char subtitle_buf[512];
+  snprintf(subtitle_buf, sizeof(subtitle_buf),
+           "<p style='color:#e74c3c;font-weight:bold;font-size:0.9rem;text-align:center;margin-top:-10px;margin-bottom:20px;'>"
+           "%s</p>", i18n_tr(STR_APP_SUBTITLE, lang));
+  httpd_resp_sendstr_chunk(req, subtitle_buf);
   httpd_resp_sendstr_chunk(req, "<form action='/login' method='POST'>");
-  httpd_resp_sendstr_chunk(req, "<input type='password' name='password' "
-                                "required placeholder='كلمة المرور'>");
-  httpd_resp_sendstr_chunk(req, "<input type='submit' value='دخول'>");
+  char form_buf[512];
+  snprintf(form_buf, sizeof(form_buf),
+           "<input type='password' name='password' required placeholder='%s'>"
+           "<input type='submit' value='%s'>",
+           i18n_tr(STR_PASSWORD, lang), i18n_tr(STR_LOGIN_BTN, lang));
+  httpd_resp_sendstr_chunk(req, form_buf);
   httpd_resp_sendstr_chunk(req, "</form></div></body></html>");
 
   return httpd_resp_sendstr_chunk(req, NULL);
@@ -352,17 +366,20 @@ static esp_err_t login_post_handler(httpd_req_t *req) {
   }
 
   // Login failed - Use the styled confirmation header
+  app_lang_t lang = i18n_get_req_lang(req);
   httpd_resp_set_type(req, "text/html; charset=UTF-8");
-  send_conf_header(req, "خطأ في الدخول", "/", 5);
+  send_conf_header(req, i18n_tr(STR_ERROR, lang), "/", 5);
   httpd_resp_sendstr_chunk(
       req, "<div class='conf-icon' style='color:#e74c3c'>❌</div>");
-  httpd_resp_sendstr_chunk(req,
-                           "<h1 class='conf-title'>كلمة المرور خاطئة</h1>");
-  httpd_resp_sendstr_chunk(
-      req,
-      "<p class='conf-msg'>يرجى التحقق من كلمة المرور والمحاولة مرة أخرى</p>");
-  httpd_resp_sendstr_chunk(
-      req, "<div class='conf-btns'><a href='/'>إعادة المحاولة</a></div>");
+  char err_h1[256];
+  snprintf(err_h1, sizeof(err_h1), "<h1 class='conf-title'>%s</h1>", i18n_tr(STR_WRONG_PASSWORD, lang));
+  httpd_resp_sendstr_chunk(req, err_h1);
+  char err_p[256];
+  snprintf(err_p, sizeof(err_p), "<p class='conf-msg'>%s</p>", i18n_tr(STR_CHECK_PASSWORD, lang));
+  httpd_resp_sendstr_chunk(req, err_p);
+  char retry_btn[256];
+  snprintf(retry_btn, sizeof(retry_btn), "<div class='conf-btns'><a href='/'>%s</a></div>", i18n_tr(STR_RETRY, lang));
+  httpd_resp_sendstr_chunk(req, retry_btn);
   httpd_resp_sendstr_chunk(req, HTML_CONF_FOOTER);
   return httpd_resp_sendstr_chunk(req, NULL);
 }
@@ -392,170 +409,210 @@ static esp_err_t root_get_handler(httpd_req_t *req) {
   int relay_state = relay_get_state(0);
   char buf[1024];
 
+  app_lang_t lang = i18n_get_req_lang(req);
   httpd_resp_set_type(req, "text/html; charset=UTF-8");
 
-  httpd_resp_sendstr_chunk(req,
-                           "<!DOCTYPE html><html lang='ar' dir='rtl'><head>");
+  char html_open[128];
+  snprintf(html_open, sizeof(html_open), "<!DOCTYPE html><html lang='%s' dir='%s'><head>",
+           i18n_code(lang), i18n_dir(lang));
+  httpd_resp_sendstr_chunk(req, html_open);
   httpd_resp_sendstr_chunk(req,
                            "<meta charset='UTF-8'><meta name='viewport' "
                            "content='width=device-width,initial-scale=1.0'>");
-  httpd_resp_sendstr_chunk(req,
-                           "<title>نظام التحكم اللاسلكي الاتوماتيكي</title>");
+  char title_buf[256];
+  snprintf(title_buf, sizeof(title_buf), "<title>%s</title>", i18n_tr(STR_APP_TITLE, lang));
+  httpd_resp_sendstr_chunk(req, title_buf);
   httpd_resp_sendstr_chunk(req, HTML_STYLE);
 
   // AJAX live update script
-  httpd_resp_sendstr_chunk(
-      req,
+  char js_status[1024];
+  snprintf(js_status, sizeof(js_status),
       "<script>"
       "function updateStatus(){"
       "fetch('/status').then(r=>r.json()).then(d=>{"
       "document.getElementById('time-val').textContent=d.time;"
       "document.getElementById('alarm-val').textContent=d.next_alarm;"
       "const rval=document.getElementById('relay-val'); if(rval){"
-      "rval.textContent=d.relay?'ON':'OFF'; rval.className=d.relay?'card-value "
-      "status-ok-text':'card-value status-alert-text';}"
+      "rval.textContent=d.relay?'ON':'OFF'; rval.className=d.relay?'card-value status-ok-text':'card-value status-alert-text';}"
       "var sb=document.getElementById('status-box');"
       "if(sb){"
       "  sb.className=d.relay?'status-box status-ok':'status-box status-alert';"
-      "  sb.textContent=d.relay?'النظام شغّال':'النظام متوقف';"
+      "  sb.textContent=d.relay?'%s':'%s';"
       "}"
       "}).catch(e=>console.error('Update failed',e));"
       "}"
-      "function loadPowerSettings() {"
-      "  fetch('/api/power').then(r=>r.json()).then(d=>{"
-      "    document.getElementById('power-mode').value = d.mode;"
-      "    document.getElementById('stealth-config').style.display = (d.mode == 2) ? 'block' : 'none';"
-      "    document.getElementById('holiday-config').style.display = (d.mode == 3) ? 'block' : 'none';"
-      "    document.getElementById('weekly-config').style.display = (d.mode == 4) ? 'block' : 'none';"
-      "    const f=(n)=>(n<10?'0':'')+n;"
-      "    document.getElementById('sleep-start').value = f(d.start_hour)+':'+f(d.start_min)+':'+f(d.start_sec);"
-      "    document.getElementById('sleep-end').value = f(d.end_hour)+':'+f(d.end_min)+':'+f(d.end_sec);"
-      "    const fd=(y,m,d_day)=>y+'-'+f(m)+'-'+f(d_day);"
-      "    if(d.start_year > 2000) {"
-      "       document.getElementById('holiday-start').value = fd(d.start_year,d.start_month,d.start_day)+'T'+f(d.start_hour)+':'+f(d.start_min);"
-      "       document.getElementById('holiday-end').value = fd(d.end_year,d.end_month,d.end_day)+'T'+f(d.end_hour)+':'+f(d.end_min);"
-      "    }"
-      "    if(d.weekly_schedule) {"
-      "      for(let i=0; i<7; i++) {"
-      "        const de = document.getElementById('w-en-'+i);"
-      "        if(de) de.checked = d.weekly_schedule[i].enabled;"
-      "        const ds = document.getElementById('w-start-'+i);"
-      "        if(ds) ds.value = f(d.weekly_schedule[i].start_hour)+':'+f(d.weekly_schedule[i].start_min)+':'+f(d.weekly_schedule[i].start_sec);"
-      "        const de_e = document.getElementById('w-end-'+i);"
-      "        if(de_e) de_e.value = f(d.weekly_schedule[i].end_hour)+':'+f(d.weekly_schedule[i].end_min)+':'+f(d.weekly_schedule[i].end_sec);"
-      "      }"
-      "    }"
-      "  });"
-      "}"
-      "function updatePowerMode() {"
-      "  const mode = document.getElementById('power-mode').value;"
-      "  document.getElementById('stealth-config').style.display = (mode == 2) ? 'block' : 'none';"
-      "  document.getElementById('holiday-config').style.display = (mode == 3) ? 'block' : 'none';"
-      "  document.getElementById('weekly-config').style.display = (mode == 4) ? 'block' : 'none';"
-      "  if(mode == 0 || mode == 1) savePowerSettings();"
-      "}"
-      "function savePowerSettings() {"
-      "  const mode = parseInt(document.getElementById('power-mode').value);"
-      "  const start = document.getElementById('sleep-start').value.split(':');"
-      "  const end = document.getElementById('sleep-end').value.split(':');"
-      "  let data = {"
-      "    mode: mode,"
-      "    start_hour: parseInt(start[0]||0),"
-      "    start_min: parseInt(start[1]||0),"
-      "    start_sec: parseInt(start[2]||0),"
-      "    end_hour: parseInt(end[0]||0),"
-      "    end_min: parseInt(end[1]||0),"
-      "    end_sec: parseInt(end[2]||0)"
-      "  };"
-      "  if(mode == 3) {"
-      "    const hs = new Date(document.getElementById('holiday-start').value);"
-      "    const he = new Date(document.getElementById('holiday-end').value);"
-      "    if(!isNaN(hs) && !isNaN(he)) {"
-      "      data.start_year = hs.getFullYear(); data.start_month = hs.getMonth() + 1; data.start_day = hs.getDate();"
-      "      data.start_hour = hs.getHours(); data.start_min = hs.getMinutes(); data.start_sec = 0;"
-      "      data.end_year = he.getFullYear(); data.end_month = he.getMonth() + 1; data.end_day = he.getDate();"
-      "      data.end_hour = he.getHours(); data.end_min = he.getMinutes(); data.end_sec = 0;"
-      "    }"
-      "  }"
-      "  if(mode == 4) {"
-      "    data.weekly_schedule = [];"
-      "    for(let i=0; i<7; i++) {"
-      "      const ds = document.getElementById('w-start-'+i);"
-      "      const de = document.getElementById('w-end-'+i);"
-      "      if(ds && de) {"
-      "        const wstart = ds.value.split(':');"
-      "        const wend = de.value.split(':');"
-      "        data.weekly_schedule.push({"
-      "          enabled: document.getElementById('w-en-'+i).checked,"
-      "          start_hour: parseInt(wstart[0]||0), start_min: parseInt(wstart[1]||0), start_sec: parseInt(wstart[2]||0),"
-      "          end_hour: parseInt(wend[0]||0), end_min: parseInt(wend[1]||0), end_sec: parseInt(wend[2]||0)"
-      "        });"
-      "      }"
-      "    }"
-      "  }"
-      "  fetch('/api/power', {"
-      "    method: 'POST',"
-      "    headers: {'Content-Type': 'application/json'},"
-      "    body: JSON.stringify(data)"
-      "  }).then(r=>r.json()).then(res=>{"
-      "    if(res.status==='ok') {"
-      "       const badge=document.getElementById('save-badge');"
-      "       if(badge){badge.style.display='inline-block'; setTimeout(()=>badge.style.display='none',3000);}"
-      "    }"
-      "  });"
-      "}"
       "setInterval(updateStatus,3000);"
       "setTimeout(updateStatus,500);"
-      "setTimeout(loadPowerSettings,1500);"
-      "function updateHealth(){"
-      "fetch('/api/health').then(r=>r.json()).then(d=>{"
-      "var hb=document.getElementById('health-bar');"
-      "var hf=document.getElementById('health-fill');"
-      "var ht=document.getElementById('health-text');"
-      "if(hb && hf && ht){"
-      "  hf.style.width=d.health+'%';"
-      "  var daysStr='';"
-      "  if(d.days_remaining===undefined||d.days_remaining>=9999){daysStr='<br><span style=\"color:#7f8c8d;font-size:0.85rem;\">⏳ جاري معايرة التقدير...</span>';}"
-      "  else if(d.days_remaining<=0){daysStr='<br><span style=\"color:#e74c3c;\">🔴 حرج: استبدال فوري!</span>';}"
-      "  else{daysStr='<br><span style=\"color:#7f8c8d;font-size:0.9rem;\">📅 متبقي تقريباً: '+d.days_remaining+' يوم</span>';}"
-      "  ht.innerHTML='صحة المُرحّل (الرولي): '+d.health.toFixed(1)+'% | الحرارة: '+d.temp.toFixed(1)+'°C'+daysStr;"
-      "  if(d.health>80) { hf.style.background='#2ecc71'; hb.style.boxShadow='none'; }"
-      "  else if(d.health>20) { hf.style.background='#f39c12'; hb.style.boxShadow='none'; }"
-      "  else { hf.style.background='#e74c3c'; hb.style.boxShadow='0 0 15px #e74c3c'; ht.innerHTML+=' <br><span style=\"color:#e74c3c\">⚠️ خطر: يجب الاستبدال!</span>'; }"
-      "}"
-      "}).catch(e=>console.error('Health update failed',e));"
-      "}"
-      "setInterval(updateHealth,5000);"
-      "setTimeout(updateHealth,1000);"
+      "</script>",
+      i18n_tr(STR_SYS_RUNNING, lang), i18n_tr(STR_SYS_STOPPED, lang));
+  httpd_resp_sendstr_chunk(req, js_status);
+
+  // Power & Predictive Maintenance script
+  httpd_resp_sendstr_chunk(req,
+      "<script>\n"
+      "function loadPowerSettings() {\n"
+      "  fetch('/api/power').then(r=>r.json()).then(d=>{\n"
+      "    document.getElementById('power-mode').value = d.mode;\n"
+      "    document.getElementById('stealth-config').style.display = (d.mode == 2) ? 'block' : 'none';\n"
+      "    document.getElementById('holiday-config').style.display = (d.mode == 3) ? 'block' : 'none';\n"
+      "    document.getElementById('weekly-config').style.display = (d.mode == 4) ? 'block' : 'none';\n"
+      "    const f=(n)=>(n<10?'0':'')+n;\n"
+      "    document.getElementById('sleep-start').value = f(d.start_hour)+':'+f(d.start_min)+':'+f(d.start_sec);\n"
+      "    document.getElementById('sleep-end').value = f(d.end_hour)+':'+f(d.end_min)+':'+f(d.end_sec);\n"
+      "    const fd=(y,m,d_day)=>y+'-'+f(m)+'-'+f(d_day);\n"
+      "    if(d.start_year > 2000) {\n"
+      "       document.getElementById('holiday-start').value = fd(d.start_year,d.start_month,d.start_day)+'T'+f(d.start_hour)+':'+f(d.start_min);\n"
+      "       document.getElementById('holiday-end').value = fd(d.end_year,d.end_month,d.end_day)+'T'+f(d.end_hour)+':'+f(d.end_min);\n"
+      "    }\n"
+      "    if(d.weekly_schedule) {\n"
+      "      for(let i=0; i<7; i++) {\n"
+      "        const de = document.getElementById('w-en-'+i);\n"
+      "        if(de) de.checked = d.weekly_schedule[i].enabled;\n"
+      "        const ds = document.getElementById('w-start-'+i);\n"
+      "        if(ds) ds.value = f(d.weekly_schedule[i].start_hour)+':'+f(d.weekly_schedule[i].start_min)+':'+f(d.weekly_schedule[i].start_sec);\n"
+      "        const de_e = document.getElementById('w-end-'+i);\n"
+      "        if(de_e) de_e.value = f(d.weekly_schedule[i].end_hour)+':'+f(d.weekly_schedule[i].end_min)+':'+f(d.weekly_schedule[i].end_sec);\n"
+      "      }\n"
+      "    }\n"
+      "  });\n"
+      "}\n"
+      "function updatePowerMode() {\n"
+      "  const mode = document.getElementById('power-mode').value;\n"
+      "  document.getElementById('stealth-config').style.display = (mode == 2) ? 'block' : 'none';\n"
+      "  document.getElementById('holiday-config').style.display = (mode == 3) ? 'block' : 'none';\n"
+      "  document.getElementById('weekly-config').style.display = (mode == 4) ? 'block' : 'none';\n"
+      "  if(mode == 0 || mode == 1) savePowerSettings();\n"
+      "}\n"
+      "function savePowerSettings() {\n"
+      "  const mode = parseInt(document.getElementById('power-mode').value);\n"
+      "  const start = document.getElementById('sleep-start').value.split(':');\n"
+      "  const end = document.getElementById('sleep-end').value.split(':');\n"
+      "  let data = {\n"
+      "    mode: mode,\n"
+      "    start_hour: parseInt(start[0]||0),\n"
+      "    start_min: parseInt(start[1]||0),\n"
+      "    start_sec: parseInt(start[2]||0),\n"
+      "    end_hour: parseInt(end[0]||0),\n"
+      "    end_min: parseInt(end[1]||0),\n"
+      "    end_sec: parseInt(end[2]||0)\n"
+      "  };\n"
+      "  if(mode == 3) {\n"
+      "    const hs = new Date(document.getElementById('holiday-start').value);\n"
+      "    const he = new Date(document.getElementById('holiday-end').value);\n"
+      "    if(!isNaN(hs) && !isNaN(he)) {\n"
+      "      data.start_year = hs.getFullYear(); data.start_month = hs.getMonth() + 1; data.start_day = hs.getDate();\n"
+      "      data.start_hour = hs.getHours(); data.start_min = hs.getMinutes(); data.start_sec = 0;\n"
+      "      data.end_year = he.getFullYear(); data.end_month = he.getMonth() + 1; data.end_day = he.getDate();\n"
+      "      data.end_hour = he.getHours(); data.end_min = he.getMinutes(); data.end_sec = 0;\n"
+      "    }\n"
+      "  }\n"
+      "  if(mode == 4) {\n"
+      "    data.weekly_schedule = [];\n"
+      "    for(let i=0; i<7; i++) {\n"
+      "      const ds = document.getElementById('w-start-'+i);\n"
+      "      const de = document.getElementById('w-end-'+i);\n"
+      "      if(ds && de) {\n"
+      "        const wstart = ds.value.split(':');\n"
+      "        const wend = de.value.split(':');\n"
+      "        data.weekly_schedule.push({\n"
+      "          enabled: document.getElementById('w-en-'+i).checked,\n"
+      "          start_hour: parseInt(wstart[0]||0), start_min: parseInt(wstart[1]||0), start_sec: parseInt(wstart[2]||0),\n"
+      "          end_hour: parseInt(wend[0]||0), end_min: parseInt(wend[1]||0), end_sec: parseInt(wend[2]||0)\n"
+      "        });\n"
+      "      }\n"
+      "    }\n"
+      "  }\n"
+      "  fetch('/api/power', {\n"
+      "    method: 'POST',\n"
+      "    headers: {'Content-Type': 'application/json'},\n"
+      "    body: JSON.stringify(data)\n"
+      "  }).then(r=>r.json()).then(res=>{\n"
+      "    if(res.status==='ok') {\n"
+      "       const badge=document.getElementById('save-badge');\n"
+      "       if(badge){badge.style.display='inline-block'; setTimeout(()=>badge.style.display='none',3000);}\n"
+      "    }\n"
+      "  });\n"
+      "}\n"
+      "setTimeout(loadPowerSettings,1500);\n"
+      "function updateHealth(){\n"
+      "fetch('/api/health').then(r=>r.json()).then(d=>{\n"
+      "var hb=document.getElementById('health-bar');\n"
+      "var hf=document.getElementById('health-fill');\n"
+      "var ht=document.getElementById('health-text');\n"
+      "if(hb && hf && ht){\n"
+      "  hf.style.width=d.health+'%';\n"
+      "  var daysStr = '';\n"
+      "  if(d.days_remaining===undefined||d.days_remaining>=9999){\n"
+      "    daysStr = \"<br><span style='color:#7f8c8d;font-size:0.85rem;'>\";");
+  snprintf(buf, sizeof(buf), "daysStr += \"%s</span>\";", i18n_tr(STR_MAINT_CALIBRATING, lang));
+  httpd_resp_sendstr_chunk(req, buf);
+  httpd_resp_sendstr_chunk(req,
+      "  } else if(d.days_remaining<=0){\n"
+      "    daysStr = \"<br><span style='color:#e74c3c;'>\";");
+  snprintf(buf, sizeof(buf), "daysStr += \"%s</span>\";", i18n_tr(STR_MAINT_CRITICAL_REPLACE, lang));
+  httpd_resp_sendstr_chunk(req, buf);
+  httpd_resp_sendstr_chunk(req,
+      "  } else {\n"
+      "    daysStr = \"<br><span style='color:#7f8c8d;font-size:0.9rem;'>\";");
+  snprintf(buf, sizeof(buf), "daysStr += \"%s\" + d.days_remaining + \"%s</span>\";",
+           i18n_tr(STR_MAINT_REMAINING_PREFIX, lang), i18n_tr(STR_MAINT_DAYS, lang));
+  httpd_resp_sendstr_chunk(req, buf);
+  httpd_resp_sendstr_chunk(req,
+      "  }\n"
+      "  ht.innerHTML = \"\";");
+  snprintf(buf, sizeof(buf), "ht.innerHTML = \"%s\" + d.health.toFixed(1) + \"%%%% %s\" + d.temp.toFixed(1) + \"°C\" + daysStr;",
+           i18n_tr(STR_MAINT_RELAY_HEALTH, lang), i18n_tr(STR_MAINT_TEMP, lang));
+  httpd_resp_sendstr_chunk(req, buf);
+  httpd_resp_sendstr_chunk(req,
+      "  if(d.health>80) { hf.style.background='#2ecc71'; hb.style.boxShadow='none'; }\n"
+      "  else if(d.health>20) { hf.style.background='#f39c12'; hb.style.boxShadow='none'; }\n"
+      "  else { hf.style.background='#e74c3c'; hb.style.boxShadow='0 0 15px #e74c3c';");
+  snprintf(buf, sizeof(buf), "ht.innerHTML += \" <br><span style='color:#e74c3c'>%s</span>\";", i18n_tr(STR_MAINT_DANGER_REPLACE, lang));
+  httpd_resp_sendstr_chunk(req, buf);
+  httpd_resp_sendstr_chunk(req,
+      "  }\n"
+      "}\n"
+      "}).catch(e=>console.error('Health update failed',e));\n"
+      "}\n"
+      "setInterval(updateHealth,5000);\n"
+      "setTimeout(updateHealth,1000);\n"
       "</script>");
 
   httpd_resp_sendstr_chunk(req, "</head><body><div class='container'>");
-  httpd_resp_sendstr_chunk(req,
-                           "<h1>نظام التحكم اللاسلكي الاتوماتيكي <span "
-                           "class='live-dot' title='System Live'></span></h1>");
-  httpd_resp_sendstr_chunk(req,
-                           "<p style='color:#e74c3c;font-weight:bold;font-size:0.9rem;text-align:center;margin-top:-10px;margin-bottom:20px;font-family:\"Cairo\",\"Tajawal\",sans-serif;'>"
-                           "إعداد و تجميع الاستاذ الدادسي احمد استاذ الفيزياء و الكيمياء ثانوية تنزرت التأهيلية مديرية تارودانت"
-                           "</p>");
+  i18n_send_lang_bar(req, lang);
+
+  char h1_buf[256];
+  snprintf(h1_buf, sizeof(h1_buf),
+           "<h1>%s <span class='live-dot' title='System Live'></span></h1>",
+           i18n_tr(STR_APP_TITLE, lang));
+  httpd_resp_sendstr_chunk(req, h1_buf);
+
+  char sub_buf[512];
+  snprintf(sub_buf, sizeof(sub_buf),
+           "<p style='color:#e74c3c;font-weight:bold;font-size:0.9rem;text-align:center;margin-top:-10px;margin-bottom:20px;'>"
+           "%s</p>",
+           i18n_tr(STR_APP_SUBTITLE, lang));
+  httpd_resp_sendstr_chunk(req, sub_buf);
 
   // Status box
   snprintf(buf, sizeof(buf),
            "<div class='status-box %s' id='status-box'>%s</div>",
            (relay_state) ? "status-ok" : "status-alert",
-           (relay_state) ? "النظام شغّال" : "النظام متوقف");
+           (relay_state) ? i18n_tr(STR_SYS_RUNNING, lang) : i18n_tr(STR_SYS_STOPPED, lang));
   httpd_resp_sendstr_chunk(req, buf);
 
   // Predictive Maintenance Health Box
-  httpd_resp_sendstr_chunk(
-      req, 
-      "<div class='card' style='max-width:100%; margin-bottom:20px; text-align:center; padding:20px; border-radius:15px; border-left:5px solid #667eea;'>"
-      "<h3 style='margin-bottom:15px; color:#2c3e50;'>🩺 الصيانة الوقائية بالذكاء الاصطناعي</h3>"
-      "<div id='health-bar' style='width:100%; height:25px; background:#e0e0e0; border-radius:12px; overflow:hidden; margin-bottom:15px;'>"
-      "<div id='health-fill' style='height:100%; width:100%; background:#2ecc71; transition:all 1s ease;'></div>"
+  snprintf(buf, sizeof(buf),
+      "<div class='card' style='max-width:100%%; margin-bottom:20px; text-align:center; padding:20px; border-radius:15px; border-left:5px solid #667eea;'>"
+      "<h3 style='margin-bottom:15px; color:#2c3e50;'>%s</h3>"
+      "<div id='health-bar' style='width:100%%; height:25px; background:#e0e0e0; border-radius:12px; overflow:hidden; margin-bottom:15px;'>"
+      "<div id='health-fill' style='height:100%%; width:100%%; background:#2ecc71; transition:all 1s ease;'></div>"
       "</div>"
-      "<div id='health-text' style='font-size:1.1rem; font-weight:bold; color:#34495e;'>جاري فحص حالة النظام...</div>"
-      "</div>"
-  );
+      "<div id='health-text' style='font-size:1.1rem; font-weight:bold; color:#34495e;'>%s</div>"
+      "</div>",
+      i18n_tr(STR_MAINT_TITLE, lang),
+      i18n_tr(STR_MAINT_CHECKING, lang));
+  httpd_resp_sendstr_chunk(req, buf);
 
   // Anomaly & Alarm Badges
   httpd_resp_sendstr_chunk(
@@ -578,21 +635,28 @@ static esp_err_t root_get_handler(httpd_req_t *req) {
   // 1. Time Card
   snprintf(buf, sizeof(buf),
            "<div class='card'><span class='card-icon'>🕒</span><span "
-           "class='card-title'>الوقت الحالي</span><span class='clock-green' "
+           "class='card-title'>%s</span><span class='clock-green' "
            "id='time-val'>%s</span></div>",
+           i18n_tr(STR_CURRENT_TIME, lang),
            time_str);
   httpd_resp_sendstr_chunk(req, buf);
 
   // 2. Next Alarm Card
   snprintf(buf, sizeof(buf),
            "<div class='card'><span class='card-icon'>🔔</span><span "
-           "class='card-title'>الجرس القادم</span><span class='card-value' "
+           "class='card-title'>%s</span><span class='card-value' "
            "id='alarm-val'>%s</span></div>",
+           i18n_tr(STR_NEXT_BELL, lang),
            next_alarm);
   httpd_resp_sendstr_chunk(req, buf);
 
   // 3. Relays
-  const char *relay_names[] = {"جرس S", "جهاز A", "جهاز B", "جهاز C"};
+  const char *relay_names[] = {
+      i18n_tr(STR_RELAY_BELL, lang),
+      i18n_tr(STR_RELAY_DEV_A, lang),
+      i18n_tr(STR_RELAY_DEV_B, lang),
+      i18n_tr(STR_RELAY_DEV_C, lang)
+  };
   for (int r = 0; r < 4; r++) {
     int state = relay_get_state(r);
     snprintf(buf, sizeof(buf),
@@ -606,54 +670,93 @@ static esp_err_t root_get_handler(httpd_req_t *req) {
   httpd_resp_sendstr_chunk(req, "</div>");
 
   // === ENERGY MANAGEMENT SECTION ===
-  httpd_resp_sendstr_chunk(
-      req,
-      "<div class='card' style='max-width:100%; margin-bottom:20px; text-align:right; border-left:5px solid #16a085;'>"
-      "<h3>⚡ إدارة الطاقة (Eco-Energy)</h3>"
+  snprintf(buf, sizeof(buf),
+      "<div class='card' style='max-width:100%%; margin-bottom:20px; text-align:%s; border-left:5px solid #16a085; direction:%s;'>"
+      "<h3>%s</h3>"
       "<div class='data-row'>"
-      "<span>وضع التشغيل:</span>"
-      "<select id='power-mode' onchange='updatePowerMode()' style='width:auto; padding:5px; margin:0;'>"
-      "<option value='0'>عادي (Normal)</option>"
-      "<option value='1'>توفير (Modem Sleep)</option>"
-      "<option value='2'>يومي (Deep Sleep)</option>"
-      "<option value='3'>عطلة (Holiday Mode)</option>"
-      "<option value='4'>أسبوعي (Weekly Mode)</option>"
-      "</select>"
-      "</div>"
+      "<span>%s</span>"
+      "<select id='power-mode' onchange='updatePowerMode()' style='width:auto; padding:5px; margin:0;'>",
+      (lang == LANG_AR) ? "right" : "left",
+      i18n_dir(lang),
+      i18n_tr(STR_POWER_TITLE, lang),
+      i18n_tr(STR_POWER_MODE, lang));
+  httpd_resp_sendstr_chunk(req, buf);
+
+  snprintf(buf, sizeof(buf),
+      "<option value='0'>%s</option>"
+      "<option value='1'>%s</option>"
+      "<option value='2'>%s</option>"
+      "<option value='3'>%s</option>"
+      "<option value='4'>%s</option>"
+      "</select></div>",
+      i18n_tr(STR_POWER_MODE_NORMAL, lang),
+      i18n_tr(STR_POWER_MODE_MODEM, lang),
+      i18n_tr(STR_POWER_MODE_DEEP, lang),
+      i18n_tr(STR_POWER_MODE_HOLIDAY, lang),
+      i18n_tr(STR_POWER_MODE_WEEKLY, lang));
+  httpd_resp_sendstr_chunk(req, buf);
+
+  // Stealth / Daily config
+  snprintf(buf, sizeof(buf),
       "<div id='stealth-config' style='display:none; margin-top:10px; border-top:1px solid #eee; padding-top:10px;'>"
-      "<p style='font-size:0.8rem; color:#666; margin-bottom:10px;'>حدد وقت النوم التلقائي (يوميا):</p>"
-      "<div style='display:flex; gap:10px; justify-content:flex-end; align-items:center;'>"
+      "<p style='font-size:0.8rem; color:#666; margin-bottom:10px;'>%s</p>"
+      "<div style='display:flex; gap:10px; justify-content:%s; align-items:center;'>"
       "<input type='time' id='sleep-start' step='1' style='width:auto; margin:0; padding:8px;'>"
-      "<span>إلى</span>"
+      "<span>%s</span>"
       "<input type='time' id='sleep-end' step='1' style='width:auto; margin:0; padding:8px;'>"
-      "</div>"
-      "</div>"
+      "</div></div>",
+      i18n_tr(STR_POWER_DAILY_DESC, lang),
+      (lang == LANG_AR) ? "flex-end" : "flex-start",
+      i18n_tr(STR_POWER_TO, lang));
+  httpd_resp_sendstr_chunk(req, buf);
+
+  // Holiday config
+  snprintf(buf, sizeof(buf),
       "<div id='holiday-config' style='display:none; margin-top:10px; border-top:1px solid #eee; padding-top:10px;'>"
-      "<p style='font-size:0.8rem; color:#666; margin-bottom:10px;'>حدد وقت وتاريخ العطلة (Holiday):</p>"
+      "<p style='font-size:0.8rem; color:#666; margin-bottom:10px;'>%s</p>"
       "<div style='display:flex; flex-direction:column; gap:10px; padding:0 20px;'>"
-      "<label style='display:flex; justify-content:space-between; align-items:center;'>من: <input type='datetime-local' id='holiday-start' style='padding:8px;'></label>"
-      "<label style='display:flex; justify-content:space-between; align-items:center;'>إلى: <input type='datetime-local' id='holiday-end' style='padding:8px;'></label>"
-      "</div>"
-      "</div>"
+      "<label style='display:flex; justify-content:space-between; align-items:center;'>%s <input type='datetime-local' id='holiday-start' style='padding:8px;'></label>"
+      "<label style='display:flex; justify-content:space-between; align-items:center;'>%s <input type='datetime-local' id='holiday-end' style='padding:8px;'></label>"
+      "</div></div>",
+      i18n_tr(STR_POWER_HOLIDAY_DESC, lang),
+      i18n_tr(STR_POWER_FROM, lang),
+      i18n_tr(STR_POWER_TO, lang));
+  httpd_resp_sendstr_chunk(req, buf);
+
+  // Weekly config
+  snprintf(buf, sizeof(buf),
       "<div id='weekly-config' style='display:none; margin-top:10px; border-top:1px solid #eee; padding-top:10px;'>"
-      "<p style='font-size:0.8rem; color:#666; margin-bottom:10px;'>حدد وقت النوم لكل يوم (من الأحد إلى السبت):</p>"
-      "<div style='display:flex; flex-direction:column; gap:10px;'>"
-      "<div style='display:flex; justify-content:space-between; align-items:center; font-size:0.8rem;'><label><input type='checkbox' id='w-en-0'> الأحد (Sun)</label> <input type='time' id='w-start-0' step='1'> - <input type='time' id='w-end-0' step='1'></div>"
-      "<div style='display:flex; justify-content:space-between; align-items:center; font-size:0.8rem;'><label><input type='checkbox' id='w-en-1'> الإثنين (Mon)</label> <input type='time' id='w-start-1' step='1'> - <input type='time' id='w-end-1' step='1'></div>"
-      "<div style='display:flex; justify-content:space-between; align-items:center; font-size:0.8rem;'><label><input type='checkbox' id='w-en-2'> الثلاثاء (Tue)</label> <input type='time' id='w-start-2' step='1'> - <input type='time' id='w-end-2' step='1'></div>"
-      "<div style='display:flex; justify-content:space-between; align-items:center; font-size:0.8rem;'><label><input type='checkbox' id='w-en-3'> الأربعاء (Wed)</label> <input type='time' id='w-start-3' step='1'> - <input type='time' id='w-end-3' step='1'></div>"
-      "<div style='display:flex; justify-content:space-between; align-items:center; font-size:0.8rem;'><label><input type='checkbox' id='w-en-4'> الخميس (Thu)</label> <input type='time' id='w-start-4' step='1'> - <input type='time' id='w-end-4' step='1'></div>"
-      "<div style='display:flex; justify-content:space-between; align-items:center; font-size:0.8rem;'><label><input type='checkbox' id='w-en-5'> الجمعة (Fri)</label> <input type='time' id='w-start-5' step='1'> - <input type='time' id='w-end-5' step='1'></div>"
-      "<div style='display:flex; justify-content:space-between; align-items:center; font-size:0.8rem;'><label><input type='checkbox' id='w-en-6'> السبت (Sat)</label> <input type='time' id='w-start-6' step='1'> - <input type='time' id='w-end-6' step='1'></div>"
-      "</div>"
-      "</div>"
-      "<div style='margin-top:15px; text-align:left;'>"
-      "<span id='save-badge' style='display:none; color:#2ecc71; margin-right:15px; font-weight:bold; font-size:1.1rem; vertical-align:middle;'>تم الحفظ بنجاح ✓</span>"
-      "<button onclick='savePowerSettings()' style='background:#16a085; color:white; border:none; padding:8px 15px; border-radius:8px; cursor:pointer; vertical-align:middle;'>حفظ إعدادات النوم</button>"
-      "</div>"
-      "</div>"
-      "</div>"
-  );
+      "<p style='font-size:0.8rem; color:#666; margin-bottom:10px;'>%s</p>"
+      "<div style='display:flex; flex-direction:column; gap:10px;'>",
+      i18n_tr(STR_POWER_WEEKLY_DESC, lang));
+  httpd_resp_sendstr_chunk(req, buf);
+
+  const app_str_t day_keys[] = {
+      STR_DAY_SUN_SHORT, STR_DAY_MON_SHORT, STR_DAY_TUE_SHORT,
+      STR_DAY_WED_SHORT, STR_DAY_THU_SHORT, STR_DAY_FRI_SHORT, STR_DAY_SAT_SHORT
+  };
+  for (int d_idx = 0; d_idx < 7; d_idx++) {
+      snprintf(buf, sizeof(buf),
+          "<div style='display:flex; justify-content:space-between; align-items:center; font-size:0.8rem;'>"
+          "<label><input type='checkbox' id='w-en-%d'> %s</label> "
+          "<div><input type='time' id='w-start-%d' step='1'> - <input type='time' id='w-end-%d' step='1'></div>"
+          "</div>",
+          d_idx, i18n_tr(day_keys[d_idx], lang), d_idx, d_idx);
+      httpd_resp_sendstr_chunk(req, buf);
+  }
+
+  // Save button & badge
+  snprintf(buf, sizeof(buf),
+      "</div></div>"
+      "<div style='margin-top:15px; text-align:%s;'>"
+      "<span id='save-badge' style='display:none; color:#2ecc71; margin-%s:15px; font-weight:bold; font-size:1.1rem; vertical-align:middle;'>%s</span>"
+      "<button onclick='savePowerSettings()' style='background:#16a085; color:white; border:none; padding:8px 15px; border-radius:8px; cursor:pointer; vertical-align:middle;'>%s</button>"
+      "</div></div>",
+      (lang == LANG_AR) ? "left" : "right",
+      (lang == LANG_AR) ? "right" : "left",
+      i18n_tr(STR_POWER_SAVED_OK, lang),
+      i18n_tr(STR_POWER_SAVE_BTN, lang));
+  httpd_resp_sendstr_chunk(req, buf);
 
   // === CAMERA SECTION ===
   char cam_ip_display[32] = "";
@@ -668,19 +771,13 @@ static esp_err_t root_get_handler(httpd_req_t *req) {
 
   // 1. Camera Feed Card Header and Image
   snprintf(buf, sizeof(buf),
-           "<div class='card' style='max-width:100%%; overflow:hidden; "
-           "margin-bottom: 20px;'>"
-           "<h3>🎥 بث المراقبة</h3>"
-           "<div style='width:100%%; max-width:640px; border-radius:15px; "
-           "overflow:hidden; box-shadow:0 4px 15px rgba(0,0,0,0.2); "
-           "background:#000; margin:auto;'>"
-           "<img id='cam-stream' style='width:100%%; height:auto; "
-           "display:block;' src='http://%s/stream' "
-           "onerror=\"this.src='https://placehold.co/640x480/000000/"
-           "ffffff.png?text=Camera+Offline'; "
-           "setTimeout(()=>this.src='http://%s/stream?t='+Date.now(), 5000);\">"
+           "<div class='card' style='max-width:100%%; overflow:hidden; margin-bottom: 20px;'>"
+           "<h3>%s</h3>"
+           "<div style='width:100%%; max-width:640px; border-radius:15px; overflow:hidden; box-shadow:0 4px 15px rgba(0,0,0,0.2); background:#000; margin:auto;'>"
+           "<img id='cam-stream' style='width:100%%; height:auto; display:block;' src='http://%s/stream' "
+           "onerror=\"this.src='https://placehold.co/640x480/000000/ffffff.png?text=Camera+Offline'; setTimeout(()=>this.src='http://%s/stream?t='+Date.now(), 5000);\">"
            "</div>",
-           cam_target, cam_target);
+           i18n_tr(STR_CAM_FEED, lang), cam_target, cam_target);
   httpd_resp_sendstr_chunk(req, buf);
 
   // 2. Control Button Link
@@ -689,74 +786,85 @@ static esp_err_t root_get_handler(httpd_req_t *req) {
       "<div style='margin-top:20px; display:flex; justify-content:center;'>"
       "<a href='http://%s/' id='cam-link' "
       "style='background:linear-gradient(45deg,#3498db,#2980b9); color:white; "
-      "padding:12px 25px; text-decoration:none; border-radius:10px; "
-      "font-weight:bold; box-shadow:0 4px 15px rgba(52,152,219,0.3); "
-      "transition:all 0.3s;'>🌐 لوحة تحكم الكاميرا</a>"
-      "</div>"
-      "</div>",
-      cam_target);
+      "padding:12px 25px; text-decoration:none; border-radius:10px; font-weight:bold; "
+      "box-shadow:0 4px 15px rgba(52,152,219,0.3); transition:all 0.3s;'>%s</a>"
+      "</div></div>",
+      cam_target, i18n_tr(STR_CAM_DASHBOARD, lang));
   httpd_resp_sendstr_chunk(req, buf);
 
-  httpd_resp_sendstr_chunk(
-      req,
+  char js_cam[512];
+  snprintf(js_cam, sizeof(js_cam),
       "<script>"
       "const cl=document.getElementById('cam-link');"
       "cl.onclick=(e)=>{"
       "  e.preventDefault();"
       "  const img=document.getElementById('cam-stream');"
-      "  if(img){ img.src=''; } " // Force disconnect MJPEG socket
+      "  if(img){ img.src=''; }"
       "  setTimeout(()=>{"
       "    const base=cl.href.split('/')[2];"
       "    if(!base || base==='esp32-cam.local'){"
-      "      const ip=prompt('أدخل عنوان IP الكاميرا:');"
+      "      const ip=prompt(\"%s\");"
       "      if(ip){ location.href='http://'+ip+'/'; }"
       "    } else { location.href=cl.href; }"
-      "  }, 300);" // 300ms to allow TCP close
+      "  }, 300);"
       "};"
-      "</script>");
+      "</script>",
+      i18n_tr(STR_CAM_ENTER_IP, lang));
+  httpd_resp_sendstr_chunk(req, js_cam);
 
-  // RTC Manual Form
-  httpd_resp_sendstr_chunk(
-      req,
-      "<div class='card' style='margin:20px 0;text-align:right'>"
-      "<h3>⏰ ضبط الوقت والساعة</h3>"
+  // RTC Manual & Auto-Device Sync Form
+  snprintf(buf, sizeof(buf),
+      "<div class='card' style='margin:20px 0;text-align:%s'>"
+      "<h3>%s</h3>"
       "<button type='button' id='syncDevBtn' "
       "style='background:linear-gradient(135deg,#2980b9,#3498db);color:white;padding:12px 16px;"
-      "border:none;border-radius:8px;font-weight:bold;cursor:pointer;width:100%;margin-bottom:15px;"
+      "border:none;border-radius:8px;font-weight:bold;cursor:pointer;width:100%%;margin-bottom:15px;"
       "font-size:1rem;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 3px 6px rgba(0,0,0,0.15)'>"
-      "🔄 مزامنة فورية مع وقت جهازي (الهاتف / الحاسوب)"
-      "</button>"
-      "<form id='timeForm' method='POST' action='/setDateTime' "
-      "style='display:grid;gap:10px;direction:rtl'>"
+      "%s"
+      "</button>",
+      (lang == LANG_AR) ? "right" : "left",
+      i18n_tr(STR_SET_TIME_TITLE, lang),
+      i18n_tr(STR_SYNC_DEV_TIME, lang));
+  httpd_resp_sendstr_chunk(req, buf);
+
+  snprintf(buf, sizeof(buf),
+      "<form id='timeForm' method='POST' action='/setDateTime' style='display:grid;gap:10px;direction:%s'>"
       "<div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;'>"
-      "<div style='text-align:center'><label "
-      "style='font-size:0.8rem;display:block'>السنة</label><input "
-      "type='number' id='year' min='2000' max='2099' value='2026' "
-      "style='padding:8px;width:100%'></div>"
-      "<div style='text-align:center'><label "
-      "style='font-size:0.8rem;display:block'>الشهر</label><input "
-      "type='number' id='month' min='1' max='12' "
-      "style='padding:8px;width:100%'></div>"
-      "<div style='text-align:center'><label "
-      "style='font-size:0.8rem;display:block'>اليوم</label><input "
-      "type='number' id='day' min='1' max='31' "
-      "style='padding:8px;width:100%'></div>"
-      "</div>"
+      "<div style='text-align:center'><label style='font-size:0.8rem;display:block'>%s</label><input type='number' id='year' min='2000' max='2099' value='2026' style='padding:8px;width:100%%'></div>"
+      "<div style='text-align:center'><label style='font-size:0.8rem;display:block'>%s</label><input type='number' id='month' min='1' max='12' style='padding:8px;width:100%%'></div>"
+      "<div style='text-align:center'><label style='font-size:0.8rem;display:block'>%s</label><input type='number' id='day' min='1' max='31' style='padding:8px;width:100%%'></div>"
+      "</div>",
+      i18n_dir(lang),
+      i18n_tr(STR_YEAR, lang),
+      i18n_tr(STR_MONTH, lang),
+      i18n_tr(STR_DAY, lang));
+  httpd_resp_sendstr_chunk(req, buf);
+
+  snprintf(buf, sizeof(buf),
       "<div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;'>"
-      "<div style='text-align:center'><label "
-      "style='font-size:0.8rem;display:block'>الساعة (HH)</label><input "
-      "type='number' id='hour' min='0' max='23' "
-      "style='padding:8px;width:100%'></div>"
-      "<div style='text-align:center'><label "
-      "style='font-size:0.8rem;display:block'>الدقيقة (MM)</label><input "
-      "type='number' id='minute' min='0' max='59' "
-      "style='padding:8px;width:100%'></div>"
-      "<div style='display:flex;align-items:flex-end'><button type='submit' "
-      "style='background:var(--success-gradient);color:white;padding:12px;"
-      "border:none;border-radius:8px;font-weight:bold;cursor:pointer;width:100%"
-      "%'>حفظ التعديل اليدوي</button></div>"
-      "</div></form><div id='timeResult' "
-      "style='margin-top:10px;font-size:0.95rem;text-align:center'></div></div>"
+      "<div style='text-align:center'><label style='font-size:0.8rem;display:block'>%s</label><input type='number' id='hour' min='0' max='23' style='padding:8px;width:100%%'></div>"
+      "<div style='text-align:center'><label style='font-size:0.8rem;display:block'>%s</label><input type='number' id='minute' min='0' max='59' style='padding:8px;width:100%%'></div>"
+      "<div style='display:flex;align-items:flex-end'><button type='submit' style='background:var(--success-gradient);color:white;padding:12px;border:none;border-radius:8px;font-weight:bold;cursor:pointer;width:100%%'>%s</button></div>"
+      "</div></form><div id='timeResult' style='margin-top:10px;font-size:0.95rem;text-align:center'></div></div>",
+      i18n_tr(STR_HOUR, lang),
+      i18n_tr(STR_MINUTE, lang),
+      i18n_tr(STR_SAVE_TIME, lang));
+  httpd_resp_sendstr_chunk(req, buf);
+
+  const char *sync_wait = (lang == LANG_AR) ? "جاري المزامنة الفورية مع جهازك..." :
+                          (lang == LANG_FR) ? "Synchronisation en cours..." :
+                          "Syncing with device...";
+  const char *save_wait = (lang == LANG_AR) ? "جاري حفظ التعديل اليدوي..." :
+                          (lang == LANG_FR) ? "Enregistrement en cours..." :
+                          "Saving manual time...";
+  const char *sync_ok = (lang == LANG_AR) ? "✅ تم ضبط الوقت وتحديث الساعة بنجاح!" :
+                        (lang == LANG_FR) ? "✅ Heure mise à jour avec succès !" :
+                        "✅ Time updated successfully!";
+  const char *sync_err = (lang == LANG_AR) ? "❌ خطأ: " :
+                         (lang == LANG_FR) ? "❌ Erreur : " :
+                         "❌ Error: ";
+
+  httpd_resp_sendstr_chunk(req,
       "<script>"
       "function sendDateTimeData(d, waitMsg){"
       "var res=document.getElementById('timeResult');"
@@ -764,20 +872,30 @@ static esp_err_t root_get_handler(httpd_req_t *req) {
       "fetch('/setDateTime',{method:'POST',headers:{'Content-Type':'application/json'},"
       "body:JSON.stringify(d)}).then(function(r){"
       "if(!r.ok) throw new Error('Status '+r.status); return r.json();"
-      "}).then(function(data){"
-      "res.innerHTML='<span style=\"color:#27ae60;font-weight:bold;\">✅ تم ضبط الوقت وتحديث الساعة بنجاح!</span>';"
+      "}).then(function(data){");
+
+  snprintf(buf, sizeof(buf),
+      "res.innerHTML='<span style=\"color:#27ae60;font-weight:bold;\">%s</span>';"
       "setTimeout(function(){location.reload();},1200);"
       "}).catch(function(err){"
-      "res.innerHTML='<span style=\"color:#e74c3c;font-weight:bold;\">❌ خطأ: '+err.message+'</span>';"
+      "res.innerHTML='<span style=\"color:#e74c3c;font-weight:bold;\">%s'+err.message+'</span>';"
       "});"
-      "}"
+      "}",
+      sync_ok, sync_err);
+  httpd_resp_sendstr_chunk(req, buf);
+
+  snprintf(buf, sizeof(buf),
       "document.getElementById('syncDevBtn').onclick=function(){"
       "var now=new Date();"
       "var d={year:now.getFullYear(),month:now.getMonth()+1,day:now.getDate(),"
       "hour:now.getHours(),minute:now.getMinutes(),second:now.getSeconds(),"
       "tz_offset:now.getTimezoneOffset()};"
-      "sendDateTimeData(d,'جاري المزامنة الفورية مع جهازك...');"
-      "};"
+      "sendDateTimeData(d,'%s');"
+      "};",
+      sync_wait);
+  httpd_resp_sendstr_chunk(req, buf);
+
+  snprintf(buf, sizeof(buf),
       "document.getElementById('timeForm').onsubmit=function(e){"
       "e.preventDefault();"
       "var now=new Date();"
@@ -788,9 +906,13 @@ static esp_err_t root_get_handler(httpd_req_t *req) {
       "minute:parseInt(document.getElementById('minute').value),"
       "second:now.getSeconds(),"
       "tz_offset:now.getTimezoneOffset()};"
-      "sendDateTimeData(d,'جاري حفظ التعديل اليدوي...');"
+      "sendDateTimeData(d,'%s');"
       "return false;"
-      "};"
+      "};",
+      save_wait);
+  httpd_resp_sendstr_chunk(req, buf);
+
+  httpd_resp_sendstr_chunk(req,
       "(function(){var n=new Date();"
       "document.getElementById('year').value=n.getFullYear();"
       "document.getElementById('month').value=n.getMonth()+1;"
@@ -800,30 +922,31 @@ static esp_err_t root_get_handler(httpd_req_t *req) {
       "})();"
       "</script>");
 
-  // Navigation
+  // Navigation Menu
   httpd_resp_sendstr_chunk(req, "<div class='nav-menu'>");
-  httpd_resp_sendstr_chunk(req, "<a href='/settings'>⏰ إعدادات الجرس</a>");
-  httpd_resp_sendstr_chunk(req, "<a href='/wifiConfig'>📶 إعدادات الشبكة</a>");
-  httpd_resp_sendstr_chunk(req,
-                           "<a href='/timezoneConfig'>🌍 المنطقة الزمنية</a>");
-  httpd_resp_sendstr_chunk(req,
-                           "<a href='/changePassword'>🔑 تغيير كلمة السر</a>");
-  httpd_resp_sendstr_chunk(req, "<a href='/about'>ℹ️ حول الجهاز</a>");
-  httpd_resp_sendstr_chunk(
-      req, "<a href='/backup' style='background:#16a085'>💾 نسخة احتياطية</a>");
-  httpd_resp_sendstr_chunk(
-      req, "<a href='/update' style='background:#9b59b6'>🔄 تحديث OTA</a>");
-  httpd_resp_sendstr_chunk(
-      req,
-      "<a href='/restart' style='background:#f39c12'>🔄 إعادة التشغيل</a>");
-  httpd_resp_sendstr_chunk(
-      req,
-      "<a href='/logs' style='background:#27ae60' download>📜 سجلات النظام</a>");
-  httpd_resp_sendstr_chunk(
-      req,
-      "<a href='/factoryReset' style='background:#c0392b'>⚠️ ضبط المصنع</a>");
-  httpd_resp_sendstr_chunk(
-      req, "<a href='/logout' class='logout'>🚪 تسجيل الخروج</a>");
+  char nav_item[256];
+  snprintf(nav_item, sizeof(nav_item), "<a href='/settings'>%s</a>", i18n_tr(STR_NAV_SETTINGS, lang));
+  httpd_resp_sendstr_chunk(req, nav_item);
+  snprintf(nav_item, sizeof(nav_item), "<a href='/wifiConfig'>%s</a>", i18n_tr(STR_NAV_WIFI, lang));
+  httpd_resp_sendstr_chunk(req, nav_item);
+  snprintf(nav_item, sizeof(nav_item), "<a href='/timezoneConfig'>%s</a>", i18n_tr(STR_NAV_TIMEZONE, lang));
+  httpd_resp_sendstr_chunk(req, nav_item);
+  snprintf(nav_item, sizeof(nav_item), "<a href='/changePassword'>%s</a>", i18n_tr(STR_NAV_PASSWORD, lang));
+  httpd_resp_sendstr_chunk(req, nav_item);
+  snprintf(nav_item, sizeof(nav_item), "<a href='/about'>%s</a>", i18n_tr(STR_NAV_ABOUT, lang));
+  httpd_resp_sendstr_chunk(req, nav_item);
+  snprintf(nav_item, sizeof(nav_item), "<a href='/backup' style='background:#16a085'>%s</a>", i18n_tr(STR_NAV_BACKUP, lang));
+  httpd_resp_sendstr_chunk(req, nav_item);
+  snprintf(nav_item, sizeof(nav_item), "<a href='/update' style='background:#9b59b6'>%s</a>", i18n_tr(STR_NAV_OTA, lang));
+  httpd_resp_sendstr_chunk(req, nav_item);
+  snprintf(nav_item, sizeof(nav_item), "<a href='/logs' style='background:#27ae60' download>%s</a>", i18n_tr(STR_NAV_LOGS, lang));
+  httpd_resp_sendstr_chunk(req, nav_item);
+  snprintf(nav_item, sizeof(nav_item), "<a href='/restart' style='background:#f39c12'>%s</a>", i18n_tr(STR_NAV_RESTART, lang));
+  httpd_resp_sendstr_chunk(req, nav_item);
+  snprintf(nav_item, sizeof(nav_item), "<a href='/factoryReset' style='background:#c0392b'>%s</a>", i18n_tr(STR_NAV_FACTORY_RESET, lang));
+  httpd_resp_sendstr_chunk(req, nav_item);
+  snprintf(nav_item, sizeof(nav_item), "<a href='/logout' class='logout'>%s</a>", i18n_tr(STR_NAV_LOGOUT, lang));
+  httpd_resp_sendstr_chunk(req, nav_item);
   httpd_resp_sendstr_chunk(req, "</div></div></body></html>");
 
   return httpd_resp_sendstr_chunk(req, NULL);
@@ -844,12 +967,19 @@ static esp_err_t settings_get_handler(httpd_req_t *req) {
   localtime_r(&now, &timeinfo);
   int currentDayIndex = (timeinfo.tm_wday + 6) % 7; // 0=Monday
 
+  app_lang_t lang = i18n_get_req_lang(req);
   httpd_resp_set_type(req, "text/html; charset=UTF-8");
-  httpd_resp_sendstr_chunk(req,
-                           "<!DOCTYPE html><html lang='ar' dir='rtl'><head>");
+
+  char html_open[128];
+  snprintf(html_open, sizeof(html_open), "<!DOCTYPE html><html lang='%s' dir='%s'><head>",
+           i18n_code(lang), i18n_dir(lang));
+  httpd_resp_sendstr_chunk(req, html_open);
   httpd_resp_sendstr_chunk(req,
                            "<meta charset='UTF-8'><meta name='viewport' "
                            "content='width=device-width,initial-scale=1.0'>");
+  char title_buf[256];
+  snprintf(title_buf, sizeof(title_buf), "<title>%s</title>", i18n_tr(STR_SCHEDULE_TITLE, lang));
+  httpd_resp_sendstr_chunk(req, title_buf);
   httpd_resp_sendstr_chunk(req, HTML_STYLE);
 
   // Mobile responsive styles (settings page specific)
@@ -874,44 +1004,35 @@ static esp_err_t settings_get_handler(httpd_req_t *req) {
            "</style>");
 
   // JavaScript: Tabs + Validation + Date/Time Update
-  const char *js_part1 =
+  char js_part1[2048];
+  snprintf(js_part1, sizeof(js_part1),
       "<script>"
       "function openTab(evt, dayName) {"
       " var i, tabcontent, tablinks;"
       " tabcontent = document.getElementsByClassName('tabcontent');"
-      " for (i = 0; i < tabcontent.length; i++) { tabcontent[i].style.display "
-      "= 'none'; }"
+      " for (i = 0; i < tabcontent.length; i++) { tabcontent[i].style.display = 'none'; }"
       " tablinks = document.getElementsByClassName('tablink');"
-      " for (i = 0; i < tablinks.length; i++) { tablinks[i].className = "
-      "tablinks[i].className.replace(' active', ''); }"
+      " for (i = 0; i < tablinks.length; i++) { tablinks[i].className = tablinks[i].className.replace(' active', ''); }"
       " document.getElementById(dayName).style.display = 'block';"
       " if(evt) evt.currentTarget.className += ' active';"
       "}"
-      // V7.1.1: VALIDATION with endDay support
       "function validateForm(evt) {"
       "  const days = 7; const alarms = 20;"
       "  for (let i = 0; i < days; i++) {"
       "    for (let j = 0; j < alarms; j++) {"
-      "      let s_input = document.getElementsByName('start' + i + '_' + "
-      "j)[0];"
+      "      let s_input = document.getElementsByName('start' + i + '_' + j)[0];"
       "      let e_input = document.getElementsByName('end' + i + '_' + j)[0];"
-      "      let endday_input = document.getElementsByName('endday' + i + '_' "
-      "+ j)[0];"
+      "      let endday_input = document.getElementsByName('endday' + i + '_' + j)[0];"
       "      if (s_input && e_input && endday_input) {"
-      "        let s = s_input.value; let e_val = e_input.value; let endDay = "
-      "endday_input.value;"
+      "        let s = s_input.value; let e_val = e_input.value; let endDay = endday_input.value;"
       "        if (s !== '' && e_val !== '') {"
       "          let sParts = s.split(':'); let eParts = e_val.split(':');"
-      "          let sSec = parseInt(sParts[0],10)*3600 + parseInt(sParts[1],10)*60 + (sParts[2] ? parseInt(sParts[2],10) : 0);"
-      "          let eSec = parseInt(eParts[0],10)*3600 + parseInt(eParts[1],10)*60 + (eParts[2] ? parseInt(eParts[2],10) : 0);"
+      "          let sSec = parseInt(sParts[0])*3600 + parseInt(sParts[1])*60 + (sParts[2] ? parseInt(sParts[2]) : 0);"
+      "          let eSec = parseInt(eParts[0])*3600 + parseInt(eParts[1])*60 + (eParts[2] ? parseInt(eParts[2]) : 0);"
       "          if (endDay == '0') {"
-      "            if (eSec < sSec) {"
-      "              alert('⚠️ خطأ: على نفس اليوم، النهاية يجب أن تكون بعد البداية!');"
+      "            if (eSec <= sSec) {"
+      "              alert(\"%s\");"
       "              evt.preventDefault(); return false;"
-      "            } else if (eSec === sSec) {"
-      "              if (!confirm('تنبيه: وقت البداية والنهاية متطابقان للاختيار! سيتم تشغيل رنين سريع لمدة 5 ثوانٍ تلقائياً. هل توافق على ذلك؟')) {"
-      "                evt.preventDefault(); return false;"
-      "              }"
       "            }"
       "          }"
       "        }"
@@ -920,16 +1041,17 @@ static esp_err_t settings_get_handler(httpd_req_t *req) {
       "  }"
       "  return true;"
       "}"
-      "document.addEventListener('DOMContentLoaded', function() {";
+      "document.addEventListener('DOMContentLoaded', function() {",
+      i18n_tr(STR_ALERT_END_AFTER_START, lang));
 
   httpd_resp_sendstr_chunk(req, js_part1);
 
   char buf[512];
   snprintf(
       buf, sizeof(buf),
-      " openTab(null, 'day%d');"
+      " try { openTab(null, 'day%d');"
       " const activeButton = document.querySelector('.tablink:nth-child(%d)');"
-      " if (activeButton) { activeButton.classList.add('active'); }"
+      " if (activeButton) { activeButton.classList.add('active'); } } catch(e) { console.error('Tab init error', e); }"
       "});",
       currentDayIndex, currentDayIndex + 1);
   httpd_resp_sendstr_chunk(req, buf);
@@ -944,17 +1066,21 @@ static esp_err_t settings_get_handler(httpd_req_t *req) {
       "</script>");
 
   httpd_resp_sendstr_chunk(req, "</head><body><div class='container'>");
+  i18n_send_lang_bar(req, lang);
 
-  // Date/Time header
   // Card Settings Start
-  httpd_resp_sendstr_chunk(req,
-                           "<div class='card' style='max-width:900px;margin:0 "
-                           "auto;text-align:right'>");
+  char card_start[256];
+  snprintf(card_start, sizeof(card_start),
+           "<div class='card' style='max-width:900px;margin:0 auto;text-align:%s'>",
+           (lang == LANG_AR) ? "right" : "left");
+  httpd_resp_sendstr_chunk(req, card_start);
 
   // Header with Icon
-  httpd_resp_sendstr_chunk(
-      req, "<div style='text-align:center'><span class='card-icon' "
-           "style='font-size:3rem'>⏰</span><h1>جدولة الجرس</h1></div>");
+  char sched_h1[256];
+  snprintf(sched_h1, sizeof(sched_h1),
+           "<div style='text-align:center'><span class='card-icon' style='font-size:3rem'>⏰</span><h1>%s</h1></div>",
+           i18n_tr(STR_SCHEDULE_TITLE, lang));
+  httpd_resp_sendstr_chunk(req, sched_h1);
 
   // Date/Time header (STICKY)
   char time_str[64];
@@ -963,9 +1089,9 @@ static esp_err_t settings_get_handler(httpd_req_t *req) {
            "<div class='info-header' "
            "style='position:sticky;top:0;background:white;padding:15px;margin-"
            "bottom:20px;box-shadow:0 2px 8px "
-           "rgba(0,0,0,0.1);z-index:100;border-radius:8px'>التاريخ "
-           "والساعة: <span "
+           "rgba(0,0,0,0.1);z-index:100;border-radius:8px'>%s <span "
            "id='dateTime'>%s</span></div>",
+           i18n_tr(STR_DATE_AND_TIME, lang),
            time_str);
   httpd_resp_sendstr_chunk(req, buf);
 
@@ -975,9 +1101,6 @@ static esp_err_t settings_get_handler(httpd_req_t *req) {
            "onsubmit='return validateForm(event)'>");
 
   // Day tabs
-  const char *daysArabic[] = {"الإثنين", "الثلاثاء", "الأربعاء", "الخميس",
-                              "الجمعة",  "السبت",    "الأحد"};
-
   httpd_resp_sendstr_chunk(
       req, "<div class='tab-container' style='display:flex;flex-wrap:wrap;"
            "gap:8px;justify-content:center;margin-bottom:15px;"
@@ -987,23 +1110,24 @@ static esp_err_t settings_get_handler(httpd_req_t *req) {
     snprintf(buf, sizeof(buf),
              "<button type='button' class='tablink%s' style='width:auto' "
              "onclick=\"openTab(event, 'day%d')\">%s</button>",
-             (i == currentDayIndex) ? " active" : "", i, daysArabic[i]);
+             (i == currentDayIndex) ? " active" : "", i, i18n_day_name(i, lang));
     httpd_resp_sendstr_chunk(req, buf);
   }
   httpd_resp_sendstr_chunk(req, "</div>");
 
   // Day content with Grid layout
   for (int i = 0; i < 7; i++) {
-    snprintf(buf, sizeof(buf), "<div id='day%d' class='tabcontent'>", i);
+    snprintf(buf, sizeof(buf), "<div id='day%d' class='tabcontent'%s>", i, (i == currentDayIndex) ? " style='display:block;'" : "");
     httpd_resp_sendstr_chunk(req, buf);
 
-    snprintf(buf, sizeof(buf), "<h2>%s</h2>", daysArabic[i]);
+    snprintf(buf, sizeof(buf), "<h2>%s</h2>", i18n_day_name(i, lang));
     httpd_resp_sendstr_chunk(req, buf);
 
     // Enabled checkbox
     snprintf(
         buf, sizeof(buf),
-        "<label>تفعيل: <input type='checkbox' name='enabled_%d'%s></label><hr>",
+        "<label>%s <input type='checkbox' name='enabled_%d'%s></label><hr>",
+        i18n_tr(STR_ENABLE_DAY, lang),
         i, alarmsEnabled[0][i] ? " checked" : "");
     httpd_resp_sendstr_chunk(req, buf);
 
@@ -1038,60 +1162,63 @@ static esp_err_t settings_get_handler(httpd_req_t *req) {
 
       httpd_resp_sendstr_chunk(req, "<div class='alarm-entry'>");
 
-      snprintf(buf, sizeof(buf), "<h3>منبه %d</h3>", j + 1);
+      snprintf(buf, sizeof(buf), "<h3>%s %d</h3>", i18n_tr(STR_ALARM_NUM, lang), j + 1);
       httpd_resp_sendstr_chunk(req, buf);
 
-      // Start time (Arabic label) - Only set value if alarm is configured
+      // Start time
       if (strlen(startVal) > 0) {
         snprintf(buf, sizeof(buf),
-                 "البداية: <input type='time' step='1' name='start%d_%d' "
+                 "%s <input type='time' step='1' name='start%d_%d' "
                  "value='%s'><br>",
-                 i, j, startVal);
+                 i18n_tr(STR_START_TIME, lang), i, j, startVal);
       } else {
         snprintf(buf, sizeof(buf),
-                 "البداية: <input type='time' step='1' name='start%d_%d'><br>",
-                 i, j);
+                 "%s <input type='time' step='1' name='start%d_%d'><br>",
+                 i18n_tr(STR_START_TIME, lang), i, j);
       }
       httpd_resp_sendstr_chunk(req, buf);
 
-      // End time (Arabic label) - Only set value if alarm is configured
+      // End time
       if (strlen(endVal) > 0) {
         snprintf(buf, sizeof(buf),
-                 "النهاية: <input type='time' step='1' name='end%d_%d' "
+                 "%s <input type='time' step='1' name='end%d_%d' "
                  "value='%s'><br>",
-                 i, j, endVal);
+                 i18n_tr(STR_END_TIME, lang), i, j, endVal);
       } else {
         snprintf(buf, sizeof(buf),
-                 "النهاية: <input type='time' step='1' name='end%d_%d'><br>", i,
-                 j);
+                 "%s <input type='time' step='1' name='end%d_%d'><br>",
+                 i18n_tr(STR_END_TIME, lang), i, j);
       }
       httpd_resp_sendstr_chunk(req, buf);
 
       // End day selector
       snprintf(buf, sizeof(buf),
-               "يوم النهاية: <select name='endday%d_%d'>"
-               "<option value='0'%s>نفس اليوم</option>"
-               "<option value='1'%s>اليوم التالي (+1)</option>"
+               "%s <select name='endday%d_%d'>"
+               "<option value='0'%s>%s</option>"
+               "<option value='1'%s>%s</option>"
                "</select><br>",
-               i, j, (endDayOffset == 0) ? " selected" : "",
-               (endDayOffset == 1) ? " selected" : "");
+               i18n_tr(STR_END_DAY, lang), i, j,
+               (endDayOffset == 0) ? " selected" : "", i18n_tr(STR_SAME_DAY, lang),
+               (endDayOffset == 1) ? " selected" : "", i18n_tr(STR_NEXT_DAY, lang));
       httpd_resp_sendstr_chunk(req, buf);
 
-      // Relay selector (NEW)
+      // Relay selector
       int rIdx = schedule[0][i].relayIdx[j];
       if (rIdx < 0 || rIdx > 3)
         rIdx = 0;
 
       snprintf(buf, sizeof(buf),
-               "الرنين: <select name='relay%d_%d'>"
-               "<option value='0'%s>الجرس S (R1)</option>"
-               "<option value='1'%s>الجهاز A (R2)</option>"
-               "<option value='2'%s>الجهاز B (R3)</option>"
-               "<option value='3'%s>الجهاز C (R4)</option>"
+               "%s <select name='relay%d_%d'>"
+               "<option value='0'%s>%s</option>"
+               "<option value='1'%s>%s</option>"
+               "<option value='2'%s>%s</option>"
+               "<option value='3'%s>%s</option>"
                "</select><br>",
-               i, j, (rIdx == 0) ? " selected" : "",
-               (rIdx == 1) ? " selected" : "", (rIdx == 2) ? " selected" : "",
-               (rIdx == 3) ? " selected" : "");
+               i18n_tr(STR_SELECT_OUTPUT, lang), i, j,
+               (rIdx == 0) ? " selected" : "", i18n_tr(STR_RELAY_BELL, lang),
+               (rIdx == 1) ? " selected" : "", i18n_tr(STR_RELAY_DEV_A, lang),
+               (rIdx == 2) ? " selected" : "", i18n_tr(STR_RELAY_DEV_B, lang),
+               (rIdx == 3) ? " selected" : "", i18n_tr(STR_RELAY_DEV_C, lang));
       httpd_resp_sendstr_chunk(req, buf);
 
       httpd_resp_sendstr_chunk(req, "</div>");
@@ -1107,75 +1234,54 @@ static esp_err_t settings_get_handler(httpd_req_t *req) {
   httpd_resp_sendstr_chunk(req, "</form>");
 
   // Import/Export Section
-  httpd_resp_sendstr_chunk(
-      req,
-      "<div style='margin:20px auto;padding:20px;background:#ecf0f1;"
-      "border-radius:10px;max-width:600px'>"
-      "<h3 style='text-align:center;margin-bottom:15px'>📥 استيراد / تصدير</h3>"
-
-      // Upload form
-      "<form action='/uploadSchedule' method='POST' "
-      "enctype='multipart/form-data' "
-      "style='margin-bottom:15px;text-align:center'>"
-      "<label style='display:block;margin-bottom:10px;font-weight:bold'>"
-      "📁 استيراد ملف JSON :</label>"
-      "<input type='file' name='schedule' accept='.json' "
-      "style='margin-bottom:10px;display:block;margin:10px auto'>"
-      "<button type='submit' "
-      "style='background:#27ae60;color:white;padding:12px 24px;"
-      "border:none;border-radius:8px;cursor:pointer;font-size:1rem;font-weight:"
-      "bold'>"
-      "⬆️ تحميل الجدول</button>"
+  char imp_buf[768];
+  snprintf(imp_buf, sizeof(imp_buf),
+      "<div style='margin:20px auto;padding:20px;background:#ecf0f1;border-radius:10px;max-width:600px'>"
+      "<h3 style='text-align:center;margin-bottom:15px'>%s</h3>"
+      "<form action='/uploadSchedule' method='POST' enctype='multipart/form-data' style='margin-bottom:15px;text-align:center'>"
+      "<label style='display:block;margin-bottom:10px;font-weight:bold'>%s</label>"
+      "<input type='file' name='schedule' accept='.json' style='margin-bottom:10px;display:block;margin:10px auto'>"
+      "<button type='submit' style='background:#27ae60;color:white;padding:12px 24px;border:none;border-radius:8px;cursor:pointer;font-size:1rem;font-weight:bold'>%s</button>"
       "</form>"
+      "<hr style='margin:20px 0;border:none;border-top:1px solid #bdc3c7'>",
+      i18n_tr(STR_IMPORT_EXPORT, lang),
+      i18n_tr(STR_IMPORT_JSON, lang),
+      i18n_tr(STR_UPLOAD_SCHEDULE, lang));
+  httpd_resp_sendstr_chunk(req, imp_buf);
 
-      // Separator
-      "<hr style='margin:20px 0;border:none;border-top:1px solid #bdc3c7'>"
-
-      // Download button
+  char dl_buf[512];
+  snprintf(dl_buf, sizeof(dl_buf),
       "<div style='text-align:center'>"
-      "<a href='/downloadSchedule' download='alarmes.json' "
-      "style='display:inline-block;background:#3498db;color:white;padding:12px "
-      "24px;"
-      "text-decoration:none;border-radius:8px;font-size:1rem;font-weight:bold'>"
-      "⬇️ تنزيل الجدول</a>"
-      "</div>"
-
-      "</div>");
+      "<a href='/downloadSchedule' download='alarmes.json' style='display:inline-block;background:#3498db;color:white;padding:12px 24px;text-decoration:none;border-radius:8px;font-size:1rem;font-weight:bold'>%s</a>"
+      "</div></div>",
+      i18n_tr(STR_DOWNLOAD_SCHEDULE, lang));
+  httpd_resp_sendstr_chunk(req, dl_buf);
 
   // Single Sticky Container for both buttons (no overlap)
-  httpd_resp_sendstr_chunk(
-      req,
-      "<div "
-      "style='position:sticky;bottom:0;background:white;padding:15px;box-"
-      "shadow:0 -4px 10px rgba(0,0,0,0.15);z-index:100'>"
+  char sticky_btn[1024];
+  snprintf(sticky_btn, sizeof(sticky_btn),
+      "<div style='position:sticky;bottom:0;background:white;padding:15px;box-shadow:0 -4px 10px rgba(0,0,0,0.15);z-index:100'>"
+      "<button id='saveBtn' onclick='showSaving()' style='width:100%%;margin-bottom:10px;font-size:1.1rem;font-weight:bold;padding:12px;background:#667eea;color:white;border:none;border-radius:8px;cursor:pointer'>%s</button>"
+      "<a href='/' style='display:block;text-align:center;padding:12px;background:#95a5a6;color:white;text-decoration:none;border-radius:8px'>%s</a>"
+      "</div>",
+      i18n_tr(STR_SAVE_SETTINGS, lang),
+      i18n_tr(STR_BACK_TO_DASHBOARD, lang));
+  httpd_resp_sendstr_chunk(req, sticky_btn);
 
-      // Submit button (primary) - Form based submit
-      "<button id='saveBtn' "
-      "onclick='showSaving()' "
-      "style='width:100%;margin-bottom:10px;font-size:1.1rem;font-weight:bold;"
-      "padding:12px;background:#667eea;color:white;border:none;"
-      "border-radius:8px;cursor:pointer'>حفظ الإعدادات</button>"
-
-      // Back button (secondary)
-      "<a href='/' style='display:block;text-align:center;padding:12px;"
-      "background:#95a5a6;color:white;text-decoration:none;border-radius:8px'>"
-      "العودة إلى اللوحة الرئيسية</a>"
-
-      "</div>"
+  char sticky_script[1024];
+  snprintf(sticky_script, sizeof(sticky_script),
       "<script>"
       "function showSaving(){"
       "  var btn = document.getElementById('saveBtn');"
-      "  btn.innerHTML = 'جاري الحفظ... <div class=\"spinner\" "
-      "style=\"display:inline-block;width:20px;height:20px;vertical-align:"
-      "middle;border:3px solid #eee;border-top:3px solid "
-      "#667eea;margin-left:10px;border-radius:50%;animation:spin 1s linear "
-      "infinite\"></div>';"
+      "  btn.innerHTML = '%s <div class=\"spinner\" style=\"display:inline-block;width:20px;height:20px;vertical-align:middle;border:3px solid #eee;border-top:3px solid #667eea;margin-left:10px;border-radius:50%%;animation:spin 1s linear infinite\"></div>';"
       "  btn.disabled = true;"
       "  btn.style.opacity = '0.7';"
       "  document.getElementById('settingsForm').submit();"
       "}"
       "</script>"
-      "</div></body></html>");
+      "</div></body></html>",
+      i18n_tr(STR_SAVING, lang));
+  httpd_resp_sendstr_chunk(req, sticky_script);
 
   return httpd_resp_sendstr_chunk(req, NULL);
 }
@@ -1546,7 +1652,7 @@ static esp_err_t save_post_handler(httpd_req_t *req) {
 
           if (day >= 0 && day < 7 && idx >= 0 && idx < MAX_ALARMS_PER_DAY) {
             // Parse HH:MM:SS
-            int h=0, m=0, s=0;
+            int h, m, s = 0;
             sscanf(decodedVal, "%d:%d:%d", &h, &m, &s);
 
             if (isStart) {
@@ -1583,8 +1689,8 @@ static esp_err_t save_post_handler(httpd_req_t *req) {
                      schedule[0][i].endMinute[j] * 60 +
                      schedule[0][i].endSecond[j];
 
-        // Reject if same day AND end < start
-        if (schedule[0][i].endDayOffset[j] == 0 && endSec < startSec) {
+        // Reject if same day AND end <= start
+        if (schedule[0][i].endDayOffset[j] == 0 && endSec <= startSec) {
           ESP_LOGW(TAG,
                    "Rejected invalid alarm: Day %d, Alarm %d (end <= start on "
                    "same day)",
@@ -1723,59 +1829,75 @@ static esp_err_t about_handler(httpd_req_t *req) {
     return httpd_resp_send(req, NULL, 0);
   }
 
+  app_lang_t lang = i18n_get_req_lang(req);
   httpd_resp_set_type(req, "text/html; charset=UTF-8");
-  httpd_resp_sendstr_chunk(req,
-                           "<!DOCTYPE html><html lang='ar' dir='rtl'><head>");
+
+  char html_open[128];
+  snprintf(html_open, sizeof(html_open), "<!DOCTYPE html><html lang='%s' dir='%s'><head>",
+           i18n_code(lang), i18n_dir(lang));
+  httpd_resp_sendstr_chunk(req, html_open);
   httpd_resp_sendstr_chunk(req,
                            "<meta charset='UTF-8'><meta name='viewport' "
                            "content='width=device-width,initial-scale=1.0'>");
-  httpd_resp_sendstr_chunk(req, "<title>حول</title>");
+  char title_buf[256];
+  snprintf(title_buf, sizeof(title_buf), "<title>%s</title>", i18n_tr(STR_NAV_ABOUT, lang));
+  httpd_resp_sendstr_chunk(req, title_buf);
   httpd_resp_sendstr_chunk(req, HTML_STYLE);
   httpd_resp_sendstr_chunk(req, "</head><body><div class='container'>");
-  httpd_resp_sendstr_chunk(req, "<h1>حول نظام جرس المدرسة اللاسلكي</h1>");
+  i18n_send_lang_bar(req, lang);
 
-  // buf removed
+  char h1_buf[256];
+  snprintf(h1_buf, sizeof(h1_buf), "<h1>%s</h1>", i18n_tr(STR_ABOUT_TITLE, lang));
+  httpd_resp_sendstr_chunk(req, h1_buf);
 
   // About Grid
   httpd_resp_sendstr_chunk(req, "<div class='dash-grid'>");
 
   // Device Card
-  httpd_resp_sendstr_chunk(
-      req, "<div class='card'><span class='card-icon'>🏫</span><span "
-           "class='card-title'>النظام</span><span "
-           "class='card-value'>Aep</span></div>");
+  char card_buf[512];
+  snprintf(card_buf, sizeof(card_buf),
+           "<div class='card'><span class='card-icon'>🏫</span><span "
+           "class='card-title'>%s</span><span class='card-value'>Aep</span></div>",
+           i18n_tr(STR_ABOUT_SYSTEM, lang));
+  httpd_resp_sendstr_chunk(req, card_buf);
 
   // Version Card
-  httpd_resp_sendstr_chunk(
-      req, "<div class='card'><span class='card-icon'>🏷️</span><span "
-           "class='card-title'>الإصدار</span><span class='card-value' "
-           "style='color:#667eea'>v12.0</span></div>");
+  snprintf(card_buf, sizeof(card_buf),
+           "<div class='card'><span class='card-icon'>🏷️</span><span "
+           "class='card-title'>%s</span><span class='card-value' style='color:#667eea'>v12.0</span></div>",
+           i18n_tr(STR_ABOUT_VERSION, lang));
+  httpd_resp_sendstr_chunk(req, card_buf);
 
   // Developer Card
-  httpd_resp_sendstr_chunk(
-      req, "<div class='card'><span "
-           "class='card-icon'>👨‍🏫</span><span "
-           "class='card-title'>المطور</span><span class='card-value' "
-           "style='font-size:1rem'>أ. الدادسي أحمد<br><small>(الفيزياء والكيمياء)</small></span></div>");
+  snprintf(card_buf, sizeof(card_buf),
+           "<div class='card'><span class='card-icon'>👨‍🏫</span><span "
+           "class='card-title'>%s</span><span class='card-value' style='font-size:1rem'>%s</span></div>",
+           i18n_tr(STR_ABOUT_DEV, lang),
+           i18n_tr(STR_ABOUT_DEV_NAME, lang));
+  httpd_resp_sendstr_chunk(req, card_buf);
 
   // Location Card
-  httpd_resp_sendstr_chunk(
-      req, "<div class='card'><span class='card-icon'>📍</span><span "
-           "class='card-title'>المؤسسة</span><span class='card-value' "
-           "style='font-size:0.9rem'>ثانوية تنزرت التأهيلية<br>تارودانت، المغرب</span></div>");
+  snprintf(card_buf, sizeof(card_buf),
+           "<div class='card'><span class='card-icon'>📍</span><span "
+           "class='card-title'>%s</span><span class='card-value' style='font-size:0.9rem'>%s</span></div>",
+           i18n_tr(STR_ABOUT_INSTITUTION, lang),
+           i18n_tr(STR_ABOUT_INSTITUTION_NAME, lang));
+  httpd_resp_sendstr_chunk(req, card_buf);
 
   // Copyright Card
-  httpd_resp_sendstr_chunk(
-      req, "<div class='card'><span "
-           "class='card-icon'>©</span><span "
-           "class='card-title'>الحقوق</span><span class='card-value' "
-           "style='font-size:0.9rem'>© 2026 جميع الحقوق محفوظة<br>الدادسي أحمد</span></div>");
-
-  // Removed MAC and Heap cards as requested
+  snprintf(card_buf, sizeof(card_buf),
+           "<div class='card'><span class='card-icon'>©</span><span "
+           "class='card-title'>%s</span><span class='card-value' style='font-size:0.9rem'>%s</span></div>",
+           i18n_tr(STR_ABOUT_RIGHTS, lang),
+           i18n_tr(STR_ABOUT_RIGHTS_TEXT, lang));
+  httpd_resp_sendstr_chunk(req, card_buf);
 
   httpd_resp_sendstr_chunk(req, "</div>");
-  httpd_resp_sendstr_chunk(req, "<div class='nav-menu'><a href='/'>العودة "
-                                "إلى لوحة التحكم</a></div>");
+  char back_buf[256];
+  snprintf(back_buf, sizeof(back_buf),
+           "<div class='nav-menu'><a href='/'>%s</a></div>",
+           i18n_tr(STR_BACK_TO_DASHBOARD, lang));
+  httpd_resp_sendstr_chunk(req, back_buf);
   httpd_resp_sendstr_chunk(req, "</div></body></html>");
 
   return httpd_resp_sendstr_chunk(req, NULL);
@@ -1789,27 +1911,32 @@ static esp_err_t restart_handler(httpd_req_t *req) {
     return httpd_resp_send(req, NULL, 0);
   }
 
+  app_lang_t lang = i18n_get_req_lang(req);
   char query[32];
   if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
     if (strstr(query, "confirm=yes")) {
       httpd_resp_set_type(req, "text/html; charset=UTF-8");
-      send_conf_header(req, "إعادة التشغيل", "/", 12);
+      send_conf_header(req, i18n_tr(STR_NAV_RESTART, lang), "/", 12);
       httpd_resp_sendstr_chunk(req, "<div class='conf-icon'>&#128267;</div>");
-      httpd_resp_sendstr_chunk(
-          req, "<h1 class='conf-title'>جاري إعادة التشغيل...</h1>");
-      httpd_resp_sendstr_chunk(req, "<p class='conf-msg'>يرجى الانتظار، سيتم "
-                                    "تحويلك تلقائياً بعد اكتمال التشغيل</p>");
+      char h1_buf[256];
+      snprintf(h1_buf, sizeof(h1_buf), "<h1 class='conf-title'>%s</h1>", i18n_tr(STR_REBOOTING, lang));
+      httpd_resp_sendstr_chunk(req, h1_buf);
+      char p_buf[256];
+      snprintf(p_buf, sizeof(p_buf), "<p class='conf-msg'>%s</p>", i18n_tr(STR_PLEASE_WAIT, lang));
+      httpd_resp_sendstr_chunk(req, p_buf);
       httpd_resp_sendstr_chunk(req, HTML_CONF_FOOTER);
       httpd_resp_sendstr_chunk(req, NULL);
-      vTaskDelay(pdMS_TO_TICKS(1500)); // Delay to allow response to be sent
+      vTaskDelay(pdMS_TO_TICKS(1500));
       esp_restart();
       return ESP_OK;
     }
   }
 
   httpd_resp_set_type(req, "text/html; charset=UTF-8");
-  httpd_resp_sendstr_chunk(req,
-                           "<!DOCTYPE html><html lang='ar' dir='rtl'><head>");
+  char html_open[128];
+  snprintf(html_open, sizeof(html_open), "<!DOCTYPE html><html lang='%s' dir='%s'><head>",
+           i18n_code(lang), i18n_dir(lang));
+  httpd_resp_sendstr_chunk(req, html_open);
   httpd_resp_sendstr_chunk(req, "<meta charset='UTF-8'>");
   httpd_resp_sendstr_chunk(req, HTML_STYLE);
   httpd_resp_sendstr_chunk(req, "</head><body><div class='container'>");
@@ -1821,21 +1948,25 @@ static esp_err_t restart_handler(httpd_req_t *req) {
   httpd_resp_sendstr_chunk(
       req,
       "<span class='card-icon' style='color:#f39c12;font-size:4rem'>🔄</span>");
-  httpd_resp_sendstr_chunk(req, "<h2>تأكيد إعادة التشغيل</h2>");
-  httpd_resp_sendstr_chunk(req,
-                           "<p style='color:#7f8c8d;margin-bottom:20px'>هل أنت "
-                           "متأكد أنك تريد إعادة تشغيل النظام؟</p>");
+  char title_h2[256];
+  snprintf(title_h2, sizeof(title_h2), "<h2>%s</h2>", i18n_tr(STR_NAV_RESTART, lang));
+  httpd_resp_sendstr_chunk(req, title_h2);
+  char confirm_p[256];
+  snprintf(confirm_p, sizeof(confirm_p),
+           "<p style='color:#7f8c8d;margin-bottom:20px'>%s</p>",
+           i18n_tr(STR_REBOOT_CONFIRM, lang));
+  httpd_resp_sendstr_chunk(req, confirm_p);
 
   httpd_resp_sendstr_chunk(
       req, "<div style='display:grid;grid-template-columns:1fr 1fr;gap:10px'>");
-  httpd_resp_sendstr_chunk(req,
-                           "<a href='/restart?confirm=yes' class='tablink' "
-                           "style='background:#f39c12;text-align:center;text-"
-                           "decoration:none;display:block'>نعم</a>");
-  httpd_resp_sendstr_chunk(req,
-                           "<a href='/' class='tablink' "
-                           "style='background:#95a5a6;text-align:center;text-"
-                           "decoration:none;display:block'>إلغاء</a>");
+  char btns[512];
+  snprintf(btns, sizeof(btns),
+           "<a href='/restart?confirm=yes' class='tablink' "
+           "style='background:#f39c12;text-align:center;text-decoration:none;display:block'>%s</a>"
+           "<a href='/' class='tablink' "
+           "style='background:#95a5a6;text-align:center;text-decoration:none;display:block'>%s</a>",
+           i18n_tr(STR_YES, lang), i18n_tr(STR_CANCEL, lang));
+  httpd_resp_sendstr_chunk(req, btns);
   httpd_resp_sendstr_chunk(req, "</div></div></div></body></html>");
 
   return httpd_resp_sendstr_chunk(req, NULL);
@@ -1849,16 +1980,19 @@ static esp_err_t factory_reset_handler(httpd_req_t *req) {
     return httpd_resp_send(req, NULL, 0);
   }
 
+  app_lang_t lang = i18n_get_req_lang(req);
   char query[32];
   if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
     if (strstr(query, "confirm=yes")) {
       httpd_resp_set_type(req, "text/html; charset=UTF-8");
-      send_conf_header(req, "ضبط المصنع", "/", 0);
+      send_conf_header(req, i18n_tr(STR_NAV_FACTORY_RESET, lang), "/", 0);
       httpd_resp_sendstr_chunk(req, "<div class='conf-icon'>&#9888;</div>");
-      httpd_resp_sendstr_chunk(
-          req, "<h1 class='conf-title'>جاري إعادة التعيين...</h1>");
-      httpd_resp_sendstr_chunk(
-          req, "<p class='conf-msg'>جاري حذف جميع البيانات...</p>");
+      char h1_buf[256];
+      snprintf(h1_buf, sizeof(h1_buf), "<h1 class='conf-title'>%s</h1>", i18n_tr(STR_FACTORY_RESET_TITLE, lang));
+      httpd_resp_sendstr_chunk(req, h1_buf);
+      char p_buf[256];
+      snprintf(p_buf, sizeof(p_buf), "<p class='conf-msg'>%s</p>", i18n_tr(STR_PLEASE_WAIT, lang));
+      httpd_resp_sendstr_chunk(req, p_buf);
       httpd_resp_sendstr_chunk(req, "<div class='spinner'></div>");
       httpd_resp_sendstr_chunk(req, HTML_CONF_FOOTER);
       httpd_resp_sendstr_chunk(req, NULL);
@@ -1871,8 +2005,10 @@ static esp_err_t factory_reset_handler(httpd_req_t *req) {
   }
 
   httpd_resp_set_type(req, "text/html; charset=UTF-8");
-  httpd_resp_sendstr_chunk(req,
-                           "<!DOCTYPE html><html lang='ar' dir='rtl'><head>");
+  char html_open[128];
+  snprintf(html_open, sizeof(html_open), "<!DOCTYPE html><html lang='%s' dir='%s'><head>",
+           i18n_code(lang), i18n_dir(lang));
+  httpd_resp_sendstr_chunk(req, html_open);
   httpd_resp_sendstr_chunk(req, "<meta charset='UTF-8'>");
   httpd_resp_sendstr_chunk(req, HTML_STYLE);
   httpd_resp_sendstr_chunk(req, "</head><body><div class='container'>");
@@ -1883,25 +2019,29 @@ static esp_err_t factory_reset_handler(httpd_req_t *req) {
   httpd_resp_sendstr_chunk(
       req,
       "<span class='card-icon' style='color:#e74c3c;font-size:4rem'>⚠️</span>");
-  httpd_resp_sendstr_chunk(req, "<h2>تأكيد ضبط المصنع</h2>");
-  httpd_resp_sendstr_chunk(
-      req,
-      "<div "
-      "style='background:#fff3cd;padding:15px;border-radius:10px;margin:20px "
-      "0;color:#856404;text-align:right'><strong>تحذير!</strong> سيتم حذف جميع "
-      "الإعدادات والبيانات:<ul><li>جميع المواقيت المبرمجة</li><li>كلمة "
-      "المرور</li><li>إعدادات الشبكة</li></ul></div>");
+  char f_h2[256];
+  snprintf(f_h2, sizeof(f_h2), "<h2>%s</h2>", i18n_tr(STR_FACTORY_RESET_TITLE, lang));
+  httpd_resp_sendstr_chunk(req, f_h2);
+
+  char warn_box[1024];
+  snprintf(warn_box, sizeof(warn_box),
+      "<div style='background:#fff3cd;padding:15px;border-radius:10px;margin:20px 0;color:#856404;text-align:%s'>"
+      "%s</div>",
+      (lang == LANG_AR) ? "right" : "left",
+      i18n_tr(STR_FACTORY_RESET_WARN, lang));
+  httpd_resp_sendstr_chunk(req, warn_box);
 
   httpd_resp_sendstr_chunk(
       req, "<div style='display:grid;grid-template-columns:1fr 1fr;gap:10px'>");
-  httpd_resp_sendstr_chunk(
-      req, "<a href='/factoryReset?confirm=yes' class='tablink' "
-           "style='background:#e74c3c;text-align:center;text-decoration:none;"
-           "display:block'>نعم، حذف</a>");
-  httpd_resp_sendstr_chunk(req,
-                           "<a href='/' class='tablink' "
-                           "style='background:#95a5a6;text-align:center;text-"
-                           "decoration:none;display:block'>إلغاء</a>");
+  char f_btns[512];
+  snprintf(f_btns, sizeof(f_btns),
+      "<a href='/factoryReset?confirm=yes' class='tablink' "
+      "style='background:#e74c3c;text-align:center;text-decoration:none;display:block'>%s</a>"
+      "<a href='/' class='tablink' "
+      "style='background:#95a5a6;text-align:center;text-decoration:none;display:block'>%s</a>",
+      i18n_tr(STR_FACTORY_RESET_CONFIRM_BTN, lang),
+      i18n_tr(STR_CANCEL, lang));
+  httpd_resp_sendstr_chunk(req, f_btns);
   httpd_resp_sendstr_chunk(req, "</div></div></div></body></html>");
 
   return httpd_resp_sendstr_chunk(req, NULL);
@@ -1915,34 +2055,52 @@ static esp_err_t change_password_get_handler(httpd_req_t *req) {
     return httpd_resp_send(req, NULL, 0);
   }
 
+  app_lang_t lang = i18n_get_req_lang(req);
   httpd_resp_set_type(req, "text/html; charset=UTF-8");
-  httpd_resp_sendstr_chunk(req,
-                           "<!DOCTYPE html><html lang='ar' dir='rtl'><head>");
+
+  char html_open[128];
+  snprintf(html_open, sizeof(html_open), "<!DOCTYPE html><html lang='%s' dir='%s'><head>",
+           i18n_code(lang), i18n_dir(lang));
+  httpd_resp_sendstr_chunk(req, html_open);
   httpd_resp_sendstr_chunk(req, "<meta charset='UTF-8'>");
+  char title_buf[256];
+  snprintf(title_buf, sizeof(title_buf), "<title>%s</title>", i18n_tr(STR_PWD_TITLE, lang));
+  httpd_resp_sendstr_chunk(req, title_buf);
   httpd_resp_sendstr_chunk(req, HTML_STYLE);
   httpd_resp_sendstr_chunk(req, "</head><body><div class='container'>");
+  i18n_send_lang_bar(req, lang);
+
   // Card Start
   httpd_resp_sendstr_chunk(
       req, "<div class='card' style='max-width:500px;margin:0 auto'>");
   httpd_resp_sendstr_chunk(req, "<span class='card-icon'>🔑</span>");
-  httpd_resp_sendstr_chunk(req, "<h2>تأكيد كلمة المرور</h2>");
-  httpd_resp_sendstr_chunk(
-      req,
-      "<form action='/changePassword' method='POST' style='text-align:right'>");
-  httpd_resp_sendstr_chunk(req, "<label>كلمة المرور الحالية:</label>");
-  httpd_resp_sendstr_chunk(
-      req, "<input type='password' name='oldpass' required><br>");
-  httpd_resp_sendstr_chunk(req, "<label>كلمة المرور الجديدة:</label>");
-  httpd_resp_sendstr_chunk(
-      req, "<input type='password' name='newpass' required><br>");
-  httpd_resp_sendstr_chunk(req, "<label>تأكيد كلمة المرور:</label>");
-  httpd_resp_sendstr_chunk(
-      req, "<input type='password' name='confirmpass' required><br>");
-  httpd_resp_sendstr_chunk(req, "<input type='submit' value='حفظ'>");
-  httpd_resp_sendstr_chunk(req, "</form>");
-  httpd_resp_sendstr_chunk(req,
-                           "<div class='nav-menu' style='margin-top:20px'><a "
-                           "href='/'>العودة</a></div>");
+  char h2_buf[256];
+  snprintf(h2_buf, sizeof(h2_buf), "<h2>%s</h2>", i18n_tr(STR_PWD_TITLE, lang));
+  httpd_resp_sendstr_chunk(req, h2_buf);
+
+  char form_buf[1024];
+  snprintf(form_buf, sizeof(form_buf),
+      "<form action='/changePassword' method='POST' style='text-align:%s'>"
+      "<label>%s</label>"
+      "<input type='password' name='oldpass' required><br>"
+      "<label>%s</label>"
+      "<input type='password' name='newpass' required><br>"
+      "<label>%s</label>"
+      "<input type='password' name='confirmpass' required><br>"
+      "<input type='submit' value='%s'>"
+      "</form>",
+      (lang == LANG_AR) ? "right" : "left",
+      i18n_tr(STR_OLD_PWD, lang),
+      i18n_tr(STR_NEW_PWD, lang),
+      i18n_tr(STR_CONFIRM_PWD, lang),
+      i18n_tr(STR_SAVE, lang));
+  httpd_resp_sendstr_chunk(req, form_buf);
+
+  char back_buf[256];
+  snprintf(back_buf, sizeof(back_buf),
+           "<div class='nav-menu' style='margin-top:20px'><a href='/'>%s</a></div>",
+           i18n_tr(STR_BACK_TO_DASHBOARD, lang));
+  httpd_resp_sendstr_chunk(req, back_buf);
   httpd_resp_sendstr_chunk(req, "</div></div></body></html>");
 
   return httpd_resp_sendstr_chunk(req, NULL);
@@ -1952,6 +2110,7 @@ static esp_err_t change_password_post_handler(httpd_req_t *req) {
   if (!is_authorized)
     return ESP_FAIL;
 
+  app_lang_t lang = i18n_get_req_lang(req);
   char buf[200];
   int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
   if (ret <= 0)
@@ -1960,15 +2119,15 @@ static esp_err_t change_password_post_handler(httpd_req_t *req) {
 
   char oldpass[50] = "", newpass[50] = "", confirmpass[50] = "";
 
+  // Parse form data
   char *token = strtok(buf, "&");
   while (token) {
     if (strncmp(token, "oldpass=", 8) == 0) {
-      strncpy(oldpass, token + 8, sizeof(oldpass) - 1);
+      url_decode_n(oldpass, token + 8, sizeof(oldpass));
     } else if (strncmp(token, "newpass=", 8) == 0) {
-      strncpy(newpass, token + 8, sizeof(newpass) - 1);
+      url_decode_n(newpass, token + 8, sizeof(newpass));
     } else if (strncmp(token, "confirmpass=", 12) == 0) {
-      strncpy(confirmpass, token + 12, sizeof(confirmpass) - 1);
-      // Remove invisible trailing characters (\r or \n) from the last parameter
+      url_decode_n(confirmpass, token + 12, sizeof(confirmpass));
       char *newline = strpbrk(confirmpass, "\r\n");
       if (newline) *newline = '\0';
     }
@@ -1977,51 +2136,58 @@ static esp_err_t change_password_post_handler(httpd_req_t *req) {
     token = strtok(NULL, "&");
   }
 
-  if (strcmp(oldpass, DEFAULT_PASSWORD) != 0) {
+  char stored_password[64] = {0};
+  if (nvs_read_string("password", stored_password, sizeof(stored_password)) != ESP_OK ||
+      strlen(stored_password) == 0) {
+    strncpy(stored_password, DEFAULT_PASSWORD, sizeof(stored_password) - 1);
+  }
+
+  if (strcmp(oldpass, stored_password) != 0) {
     httpd_resp_set_type(req, "text/html; charset=UTF-8");
-    send_conf_header(req, "خطأ", "/changePassword", 5);
+    send_conf_header(req, i18n_tr(STR_ERROR, lang), "/changePassword", 5);
     httpd_resp_sendstr_chunk(req, "<div class='conf-icon'>&#9888;</div>");
-    httpd_resp_sendstr_chunk(req,
-                             "<h1 class='conf-title'>خطأ في كلمة المرور</h1>");
-    httpd_resp_sendstr_chunk(
-        req, "<p class='conf-msg'>كلمة المرور الحالية غير صحيحة</p>");
-    httpd_resp_sendstr_chunk(req,
-                             "<div class='conf-btns'><a "
-                             "href='/changePassword'>حاول مرة أخرى</a></div>");
+    char h1_buf[256];
+    snprintf(h1_buf, sizeof(h1_buf), "<h1 class='conf-title'>%s</h1>", i18n_tr(STR_ERROR, lang));
+    httpd_resp_sendstr_chunk(req, h1_buf);
+    char p_buf[256];
+    snprintf(p_buf, sizeof(p_buf), "<p class='conf-msg'>%s</p>", i18n_tr(STR_PWD_WRONG_OLD, lang));
+    httpd_resp_sendstr_chunk(req, p_buf);
+    char btn_buf[256];
+    snprintf(btn_buf, sizeof(btn_buf), "<div class='conf-btns'><a href='/changePassword'>%s</a></div>", i18n_tr(STR_RETRY, lang));
+    httpd_resp_sendstr_chunk(req, btn_buf);
     httpd_resp_sendstr_chunk(req, HTML_CONF_FOOTER);
     return httpd_resp_sendstr_chunk(req, NULL);
   }
 
   if (strcmp(newpass, confirmpass) != 0) {
     httpd_resp_set_type(req, "text/html; charset=UTF-8");
-    send_conf_header(req, "خطأ", "/changePassword", 5);
+    send_conf_header(req, i18n_tr(STR_ERROR, lang), "/changePassword", 5);
     httpd_resp_sendstr_chunk(req, "<div class='conf-icon'>&#9888;</div>");
-    httpd_resp_sendstr_chunk(
-        req, "<h1 class='conf-title'>كلمات المرور غير متطابقة</h1>");
-    httpd_resp_sendstr_chunk(req, "<p class='conf-msg'>كلمتا المرور الجديدتان "
-                                  "يجب أن تكونا متطابقتين</p>");
-    httpd_resp_sendstr_chunk(req,
-                             "<div class='conf-btns'><a "
-                             "href='/changePassword'>حاول مرة أخرى</a></div>");
+    char h1_buf[256];
+    snprintf(h1_buf, sizeof(h1_buf), "<h1 class='conf-title'>%s</h1>", i18n_tr(STR_ERROR, lang));
+    httpd_resp_sendstr_chunk(req, h1_buf);
+    char p_buf[256];
+    snprintf(p_buf, sizeof(p_buf), "<p class='conf-msg'>%s</p>", i18n_tr(STR_PWD_MISMATCH, lang));
+    httpd_resp_sendstr_chunk(req, p_buf);
+    char btn_buf[256];
+    snprintf(btn_buf, sizeof(btn_buf), "<div class='conf-btns'><a href='/changePassword'>%s</a></div>", i18n_tr(STR_RETRY, lang));
+    httpd_resp_sendstr_chunk(req, btn_buf);
     httpd_resp_sendstr_chunk(req, HTML_CONF_FOOTER);
     return httpd_resp_sendstr_chunk(req, NULL);
   }
 
-  // Phase 1.B: Save new password to NVS
   esp_err_t err = nvs_write_string("password", newpass);
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "Failed to save password to NVS: %s", esp_err_to_name(err));
     httpd_resp_set_type(req, "text/html; charset=UTF-8");
-    send_conf_header(req, "خطأ", "/changePassword", 5);
+    send_conf_header(req, i18n_tr(STR_ERROR, lang), "/changePassword", 5);
     httpd_resp_sendstr_chunk(req, "<div class='conf-icon'>&#10060;</div>");
-    httpd_resp_sendstr_chunk(req,
-                             "<h1 class='conf-title'>فشل حفظ كلمة المرور</h1>");
-    httpd_resp_sendstr_chunk(
-        req,
-        "<p class='conf-msg'>حدث خطأ أثناء حفظ كلمة المرور في الذاكرة</p>");
-    httpd_resp_sendstr_chunk(req,
-                             "<div class='conf-btns'><a "
-                             "href='/changePassword'>حاول مرة أخرى</a></div>");
+    char h1_buf[256];
+    snprintf(h1_buf, sizeof(h1_buf), "<h1 class='conf-title'>%s</h1>", i18n_tr(STR_ERROR, lang));
+    httpd_resp_sendstr_chunk(req, h1_buf);
+    char btn_buf[256];
+    snprintf(btn_buf, sizeof(btn_buf), "<div class='conf-btns'><a href='/changePassword'>%s</a></div>", i18n_tr(STR_RETRY, lang));
+    httpd_resp_sendstr_chunk(req, btn_buf);
     httpd_resp_sendstr_chunk(req, HTML_CONF_FOOTER);
     return httpd_resp_sendstr_chunk(req, NULL);
   }
@@ -2029,15 +2195,18 @@ static esp_err_t change_password_post_handler(httpd_req_t *req) {
   ESP_LOGI(TAG, "Password changed and saved to NVS successfully");
 
   httpd_resp_set_type(req, "text/html; charset=UTF-8");
-  send_conf_header(req, "نجاح", "/", 3);
+  send_conf_header(req, i18n_tr(STR_SUCCESS, lang), "/", 3);
   httpd_resp_sendstr_chunk(req, "<div class='conf-icon'>&#9989;</div>");
-  httpd_resp_sendstr_chunk(
-      req, "<h1 class='conf-title'>تم تغيير كلمة المرور بنجاح</h1>");
-  httpd_resp_sendstr_chunk(
-      req, "<p class='conf-msg'>تم حفظ كلمة المرور الجديدة بنجاح</p>");
+  char ok_h1[256];
+  snprintf(ok_h1, sizeof(ok_h1), "<h1 class='conf-title'>%s</h1>", i18n_tr(STR_SUCCESS, lang));
+  httpd_resp_sendstr_chunk(req, ok_h1);
+  char ok_p[256];
+  snprintf(ok_p, sizeof(ok_p), "<p class='conf-msg'>%s</p>", i18n_tr(STR_PWD_CHANGED_OK, lang));
+  httpd_resp_sendstr_chunk(req, ok_p);
   httpd_resp_sendstr_chunk(req, "<div class='spinner'></div>");
-  httpd_resp_sendstr_chunk(
-      req, "<p style='color:#999;font-size:0.95rem'>جاري العودة...</p>");
+  char ret_p[256];
+  snprintf(ret_p, sizeof(ret_p), "<p style='color:#999;font-size:0.95rem'>%s</p>", i18n_tr(STR_RETURNING, lang));
+  httpd_resp_sendstr_chunk(req, ret_p);
   httpd_resp_sendstr_chunk(req, HTML_CONF_FOOTER);
   return httpd_resp_sendstr_chunk(req, NULL);
 }
@@ -2050,49 +2219,70 @@ static esp_err_t wifi_config_get_handler(httpd_req_t *req) {
     return httpd_resp_send(req, NULL, 0);
   }
 
+  app_lang_t lang = i18n_get_req_lang(req);
   httpd_resp_set_type(req, "text/html; charset=UTF-8");
-  httpd_resp_sendstr_chunk(req,
-                           "<!DOCTYPE html><html lang='ar' dir='rtl'><head>");
+
+  char html_open[128];
+  snprintf(html_open, sizeof(html_open), "<!DOCTYPE html><html lang='%s' dir='%s'><head>",
+           i18n_code(lang), i18n_dir(lang));
+  httpd_resp_sendstr_chunk(req, html_open);
   httpd_resp_sendstr_chunk(req,
                            "<meta charset='UTF-8'><meta name='viewport' "
                            "content='width=device-width,initial-scale=1.0'>");
+  char title_buf[256];
+  snprintf(title_buf, sizeof(title_buf), "<title>%s</title>", i18n_tr(STR_WIFI_TITLE, lang));
+  httpd_resp_sendstr_chunk(req, title_buf);
   httpd_resp_sendstr_chunk(req, HTML_STYLE);
   httpd_resp_sendstr_chunk(req, "</head><body><div class='container'>");
+  i18n_send_lang_bar(req, lang);
+
   // Card Start
   httpd_resp_sendstr_chunk(
       req, "<div class='card' style='max-width:500px;margin:0 auto'>");
   httpd_resp_sendstr_chunk(
       req, "<span class='card-icon' style='color:#3498db'>📶</span>");
-  httpd_resp_sendstr_chunk(req, "<h2>إعدادات الشبكة</h2>");
+  char h2_buf[256];
+  snprintf(h2_buf, sizeof(h2_buf), "<h2>%s</h2>", i18n_tr(STR_WIFI_TITLE, lang));
+  httpd_resp_sendstr_chunk(req, h2_buf);
+
+  char current_ssid[33] = {0};
+  nvs_read_string("wifi_ssid", current_ssid, sizeof(current_ssid));
+  if (strlen(current_ssid) == 0) strcpy(current_ssid, "--");
 
   char buf[512];
   snprintf(
       buf, sizeof(buf),
-      "<div "
-      "style='background:#f0f8ff;padding:10px;border-radius:8px;margin-bottom:"
-      "15px;text-align:center'><strong>SSID الحالي:</strong> %s</div>",
-      "\u0627\u0644\u0625\u0639\u062f\u0627\u062f \u0627\u0644\u062d\u0627\u0644\u064a");
+      "<div style='background:#f0f8ff;padding:10px;border-radius:8px;margin-bottom:15px;text-align:center'>"
+      "<strong>%s</strong> %s</div>",
+      i18n_tr(STR_CURRENT_SSID, lang), current_ssid);
   httpd_resp_sendstr_chunk(req, buf);
 
-  httpd_resp_sendstr_chunk(
-      req,
-      "<form action='/wifiConfig' method='POST' style='text-align:right'>");
-  httpd_resp_sendstr_chunk(req, "<label>اسم الشبكة (SSID):</label>");
-  httpd_resp_sendstr_chunk(
-      req, "<input type='text' name='ssid' placeholder='SSID' required><br>");
-  httpd_resp_sendstr_chunk(req, "<label>كلمة المرور:</label>");
-  httpd_resp_sendstr_chunk(
-      req, "<input type='password' name='password' required><br>");
-  httpd_resp_sendstr_chunk(req, "<input type='submit' value='حفظ'>");
-  httpd_resp_sendstr_chunk(req, "</form>");
+  char form_buf[1024];
+  snprintf(form_buf, sizeof(form_buf),
+      "<form action='/wifiConfig' method='POST' style='text-align:%s'>"
+      "<label>%s</label>"
+      "<input type='text' name='ssid' placeholder='SSID' required><br>"
+      "<label>%s</label>"
+      "<input type='password' name='password' required><br>"
+      "<input type='submit' value='%s'>"
+      "</form>",
+      (lang == LANG_AR) ? "right" : "left",
+      i18n_tr(STR_NETWORK_NAME, lang),
+      i18n_tr(STR_PASSWORD, lang),
+      i18n_tr(STR_SAVE, lang));
+  httpd_resp_sendstr_chunk(req, form_buf);
 
-  httpd_resp_sendstr_chunk(
-      req, "<p "
-           "style='color:#856404;font-size:0.9rem;text-align:center;margin-top:"
-           "10px'>⚠️ ستحتاج إلى إعادة التشغيل لتطبيق التغييرات</p>");
-  httpd_resp_sendstr_chunk(req,
-                           "<div class='nav-menu' style='margin-top:20px'><a "
-                           "href='/'>العودة</a></div>");
+  char warn_p[512];
+  snprintf(warn_p, sizeof(warn_p),
+      "<p style='color:#856404;font-size:0.9rem;text-align:center;margin-top:10px'>%s</p>",
+      i18n_tr(STR_WIFI_WARN_RESTART, lang));
+  httpd_resp_sendstr_chunk(req, warn_p);
+
+  char back_buf[256];
+  snprintf(back_buf, sizeof(back_buf),
+      "<div class='nav-menu' style='margin-top:20px'><a href='/'>%s</a></div>",
+      i18n_tr(STR_BACK_TO_DASHBOARD, lang));
+  httpd_resp_sendstr_chunk(req, back_buf);
   httpd_resp_sendstr_chunk(req, "</div></div></body></html>");
 
   return httpd_resp_sendstr_chunk(req, NULL);
@@ -2102,7 +2292,7 @@ static esp_err_t wifi_config_post_handler(httpd_req_t *req) {
   if (!is_authorized)
     return ESP_FAIL;
 
-  // Phase 1.B: Parse and save WiFi credentials to NVS
+  app_lang_t lang = i18n_get_req_lang(req);
   char buf[300];
   int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
   if (ret <= 0)
@@ -2125,14 +2315,17 @@ static esp_err_t wifi_config_post_handler(httpd_req_t *req) {
   // Validate
   if (strlen(ssid) == 0 || strlen(password) == 0) {
     httpd_resp_set_type(req, "text/html; charset=UTF-8");
-    send_conf_header(req, "خطأ", "/wifiConfig", 5);
+    send_conf_header(req, i18n_tr(STR_ERROR, lang), "/wifiConfig", 5);
     httpd_resp_sendstr_chunk(req, "<div class='conf-icon'>&#9888;</div>");
-    httpd_resp_sendstr_chunk(req,
-                             "<h1 class='conf-title'>بيانات غير صحيحة</h1>");
-    httpd_resp_sendstr_chunk(
-        req, "<p class='conf-msg'>SSID وكلمة المرور مطلوبان</p>");
-    httpd_resp_sendstr_chunk(
-        req, "<div class='conf-btns'><a href='/wifiConfig'>العودة</a></div>");
+    char h1_buf[256];
+    snprintf(h1_buf, sizeof(h1_buf), "<h1 class='conf-title'>%s</h1>", i18n_tr(STR_ERROR, lang));
+    httpd_resp_sendstr_chunk(req, h1_buf);
+    char p_buf[256];
+    snprintf(p_buf, sizeof(p_buf), "<p class='conf-msg'>%s</p>", i18n_tr(STR_WIFI_INVALID_INPUT, lang));
+    httpd_resp_sendstr_chunk(req, p_buf);
+    char btn_buf[256];
+    snprintf(btn_buf, sizeof(btn_buf), "<div class='conf-btns'><a href='/wifiConfig'>%s</a></div>", i18n_tr(STR_RETRY, lang));
+    httpd_resp_sendstr_chunk(req, btn_buf);
     httpd_resp_sendstr_chunk(req, HTML_CONF_FOOTER);
     return httpd_resp_sendstr_chunk(req, NULL);
   }
@@ -2145,14 +2338,17 @@ static esp_err_t wifi_config_post_handler(httpd_req_t *req) {
 
   if (err != ESP_OK) {
     httpd_resp_set_type(req, "text/html; charset=UTF-8");
-    send_conf_header(req, "خطأ", "/wifiConfig", 5);
+    send_conf_header(req, i18n_tr(STR_ERROR, lang), "/wifiConfig", 5);
     httpd_resp_sendstr_chunk(req, "<div class='conf-icon'>&#10060;</div>");
-    httpd_resp_sendstr_chunk(req,
-                             "<h1 class='conf-title'>فشل حفظ الإعدادات</h1>");
-    httpd_resp_sendstr_chunk(
-        req, "<p class='conf-msg'>حدث خطأ أثناء حفظ إعدادات WiFi</p>");
-    httpd_resp_sendstr_chunk(
-        req, "<div class='conf-btns'><a href='/wifiConfig'>العودة</a></div>");
+    char h1_buf[256];
+    snprintf(h1_buf, sizeof(h1_buf), "<h1 class='conf-title'>%s</h1>", i18n_tr(STR_ERROR, lang));
+    httpd_resp_sendstr_chunk(req, h1_buf);
+    char p_buf[256];
+    snprintf(p_buf, sizeof(p_buf), "<p class='conf-msg'>%s</p>", i18n_tr(STR_WIFI_SAVE_FAILED, lang));
+    httpd_resp_sendstr_chunk(req, p_buf);
+    char btn_buf[256];
+    snprintf(btn_buf, sizeof(btn_buf), "<div class='conf-btns'><a href='/wifiConfig'>%s</a></div>", i18n_tr(STR_RETRY, lang));
+    httpd_resp_sendstr_chunk(req, btn_buf);
     httpd_resp_sendstr_chunk(req, HTML_CONF_FOOTER);
     return httpd_resp_sendstr_chunk(req, NULL);
   }
@@ -2160,14 +2356,20 @@ static esp_err_t wifi_config_post_handler(httpd_req_t *req) {
   ESP_LOGI(TAG, "WiFi credentials saved to NVS (SSID: %s)", ssid);
 
   httpd_resp_set_type(req, "text/html; charset=UTF-8");
-  send_conf_header(req, "تم الحفظ", "/", 5);
+  send_conf_header(req, i18n_tr(STR_SUCCESS, lang), "/", 5);
   httpd_resp_sendstr_chunk(req, "<div class='conf-icon'>&#9989;</div>");
-  httpd_resp_sendstr_chunk(req, "<h1 class='conf-title'>تم حفظ WiFi</h1>");
-  httpd_resp_sendstr_chunk(
-      req, "<p class='conf-msg'>أعد تشغيل النظام لتطبيق التغييرات</p>");
-  httpd_resp_sendstr_chunk(req,
-                           "<div class='conf-btns'><a href='/restart'>إعادة "
-                           "التشغيل</a><a href='/'>لاحقا</a></div>");
+  char ok_h1[256];
+  snprintf(ok_h1, sizeof(ok_h1), "<h1 class='conf-title'>%s</h1>", i18n_tr(STR_WIFI_SAVED, lang));
+  httpd_resp_sendstr_chunk(req, ok_h1);
+  char ok_p[256];
+  snprintf(ok_p, sizeof(ok_p), "<p class='conf-msg'>%s</p>", i18n_tr(STR_WIFI_RESTART_PROMPT, lang));
+  httpd_resp_sendstr_chunk(req, ok_p);
+  char btns_buf[512];
+  snprintf(btns_buf, sizeof(btns_buf),
+      "<div class='conf-btns'><a href='/restart'>%s</a><a href='/'>%s</a></div>",
+      i18n_tr(STR_RESTART_NOW, lang),
+      i18n_tr(STR_LATER, lang));
+  httpd_resp_sendstr_chunk(req, btns_buf);
   httpd_resp_sendstr_chunk(req, HTML_CONF_FOOTER);
   return httpd_resp_sendstr_chunk(req, NULL);
 }
@@ -2180,24 +2382,35 @@ static esp_err_t timezone_config_get_handler(httpd_req_t *req) {
     return httpd_resp_send(req, NULL, 0);
   }
 
+  app_lang_t lang = i18n_get_req_lang(req);
+
   httpd_resp_set_type(req, "text/html; charset=UTF-8");
-  httpd_resp_sendstr_chunk(req,
-                           "<!DOCTYPE html><html lang='ar' dir='rtl'><head>");
-  httpd_resp_sendstr_chunk(req,
-                           "<meta charset='UTF-8'><meta name='viewport' "
-                           "content='width=device-width,initial-scale=1.0'>");
+  char html_head[256];
+  snprintf(html_head, sizeof(html_head),
+           "<!DOCTYPE html><html lang='%s' dir='%s'><head>"
+           "<meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1.0'>"
+           "<title>%s</title>",
+           i18n_code(lang), i18n_dir(lang), i18n_tr(STR_TZ_TITLE, lang));
+  httpd_resp_sendstr_chunk(req, html_head);
   httpd_resp_sendstr_chunk(req, HTML_STYLE);
   httpd_resp_sendstr_chunk(req, "</head><body><div class='container'>");
+  i18n_send_lang_bar(req, lang);
+
   // Card Start
   httpd_resp_sendstr_chunk(
       req, "<div class='card' style='max-width:500px;margin:0 auto'>");
   httpd_resp_sendstr_chunk(req, "<span class='card-icon'>🌍</span>");
-  httpd_resp_sendstr_chunk(req, "<h2>إعدادات المنطقة الزمنية</h2>");
+  char h2_buf[256];
+  snprintf(h2_buf, sizeof(h2_buf), "<h2>%s</h2>", i18n_tr(STR_TZ_TITLE, lang));
+  httpd_resp_sendstr_chunk(req, h2_buf);
 
   httpd_resp_sendstr_chunk(
       req,
-      "<form action='/timezoneConfig' method='POST' style='text-align:right'>");
-  httpd_resp_sendstr_chunk(req, "<label>اختر المنطقة الزمنية:</label>");
+      "<form action='/timezoneConfig' method='POST'>");
+  char lbl_buf[256];
+  snprintf(lbl_buf, sizeof(lbl_buf), "<label>%s</label>", i18n_tr(STR_SELECT_TZ, lang));
+  httpd_resp_sendstr_chunk(req, lbl_buf);
+
   char current_tz[64] = {0};
   nvs_read_string("timezone", current_tz, sizeof(current_tz));
   if (strlen(current_tz) == 0 || strstr(current_tz, "WET-0WEST") != NULL) {
@@ -2207,27 +2420,62 @@ static esp_err_t timezone_config_get_handler(httpd_req_t *req) {
   httpd_resp_sendstr_chunk(req, "<select name='timezone' style='padding:10px;width:100%;font-size:1rem;border-radius:8px;border:1px solid #ccc;margin:10px 0;'>");
   
   char buf[700];
-  snprintf(buf, sizeof(buf), 
-           "<option value='GMT0' %s>🇲🇦 المغرب / توقيت غرينتش الرسمي (GMT+0)</option>"
-           "<option value='CET-1' %s>🇲🇦 المغرب / التوقيت الصيفي (GMT+1)</option>"
-           "<option value='GMT0' %s>🌍 توقيت غرينتش العالمي (GMT+0)</option>"
-           "<option value='CET-1' %s>🌍 وسط أوروبا (GMT+1)</option>"
-           "<option value='EET-2' %s>🌍 شرق أوروبا / القاهرة (GMT+2)</option>"
-           "<option value='AST-3' %s>🕋 مكة المكرمة / السعودية (GMT+3)</option>",
-           (strcmp(current_tz, "GMT0") == 0) ? "selected" : "",
-           (strcmp(current_tz, "CET-1") == 0) ? "selected" : "",
-           "",
-           "",
-           (strcmp(current_tz, "EET-2") == 0) ? "selected" : "",
-           (strcmp(current_tz, "AST-3") == 0) ? "selected" : "");
+  if (lang == LANG_FR) {
+    snprintf(buf, sizeof(buf), 
+             "<option value='GMT0' %s>🇲🇦 Maroc / Heure légale GMT (GMT+0)</option>"
+             "<option value='CET-1' %s>🇲🇦 Maroc / Heure d'été (GMT+1)</option>"
+             "<option value='GMT0' %s>🌍 GMT Universel (GMT+0)</option>"
+             "<option value='CET-1' %s>🌍 Europe Centrale (GMT+1)</option>"
+             "<option value='EET-2' %s>🌍 Europe de l'Est / Le Caire (GMT+2)</option>"
+             "<option value='AST-3' %s>🕋 La Mecque / Arabie Saoudite (GMT+3)</option>",
+             (strcmp(current_tz, "GMT0") == 0) ? "selected" : "",
+             (strcmp(current_tz, "CET-1") == 0) ? "selected" : "",
+             "",
+             "",
+             (strcmp(current_tz, "EET-2") == 0) ? "selected" : "",
+             (strcmp(current_tz, "AST-3") == 0) ? "selected" : "");
+  } else if (lang == LANG_EN) {
+    snprintf(buf, sizeof(buf), 
+             "<option value='GMT0' %s>🇲🇦 Morocco / Official Standard Time (GMT+0)</option>"
+             "<option value='CET-1' %s>🇲🇦 Morocco / Daylight Saving Time (GMT+1)</option>"
+             "<option value='GMT0' %s>🌍 Universal GMT (GMT+0)</option>"
+             "<option value='CET-1' %s>🌍 Central Europe (GMT+1)</option>"
+             "<option value='EET-2' %s>🌍 Eastern Europe / Cairo (GMT+2)</option>"
+             "<option value='AST-3' %s>🕋 Makkah / Saudi Arabia (GMT+3)</option>",
+             (strcmp(current_tz, "GMT0") == 0) ? "selected" : "",
+             (strcmp(current_tz, "CET-1") == 0) ? "selected" : "",
+             "",
+             "",
+             (strcmp(current_tz, "EET-2") == 0) ? "selected" : "",
+             (strcmp(current_tz, "AST-3") == 0) ? "selected" : "");
+  } else {
+    snprintf(buf, sizeof(buf), 
+             "<option value='GMT0' %s>🇲🇦 المغرب / توقيت غرينتش الرسمي (GMT+0)</option>"
+             "<option value='CET-1' %s>🇲🇦 المغرب / التوقيت الصيفي (GMT+1)</option>"
+             "<option value='GMT0' %s>🌍 توقيت غرينتش العالمي (GMT+0)</option>"
+             "<option value='CET-1' %s>🌍 وسط أوروبا (GMT+1)</option>"
+             "<option value='EET-2' %s>🌍 شرق أوروبا / القاهرة (GMT+2)</option>"
+             "<option value='AST-3' %s>🕋 مكة المكرمة / السعودية (GMT+3)</option>",
+             (strcmp(current_tz, "GMT0") == 0) ? "selected" : "",
+             (strcmp(current_tz, "CET-1") == 0) ? "selected" : "",
+             "",
+             "",
+             (strcmp(current_tz, "EET-2") == 0) ? "selected" : "",
+             (strcmp(current_tz, "AST-3") == 0) ? "selected" : "");
+  }
   httpd_resp_sendstr_chunk(req, buf);
   httpd_resp_sendstr_chunk(req, "</select><br>");
-  httpd_resp_sendstr_chunk(req, "<input type='submit' value='حفظ'>");
+
+  char submit_btn[128];
+  snprintf(submit_btn, sizeof(submit_btn), "<input type='submit' value='%s'>", i18n_tr(STR_SAVE, lang));
+  httpd_resp_sendstr_chunk(req, submit_btn);
   httpd_resp_sendstr_chunk(req, "</form>");
 
-  httpd_resp_sendstr_chunk(req,
-                           "<div class='nav-menu' style='margin-top:20px'><a "
-                           "href='/'>العودة</a></div>");
+  char nav_back[256];
+  snprintf(nav_back, sizeof(nav_back),
+           "<div class='nav-menu' style='margin-top:20px'><a href='/'>%s</a></div>",
+           i18n_tr(STR_BACK_TO_DASHBOARD, lang));
+  httpd_resp_sendstr_chunk(req, nav_back);
   httpd_resp_sendstr_chunk(req, "</div></div></body></html>");
 
   return httpd_resp_sendstr_chunk(req, NULL);
@@ -2236,6 +2484,8 @@ static esp_err_t timezone_config_get_handler(httpd_req_t *req) {
 static esp_err_t timezone_config_post_handler(httpd_req_t *req) {
   if (!is_authorized)
     return ESP_FAIL;
+
+  app_lang_t lang = i18n_get_req_lang(req);
 
   // Phase 1.B: Parse, save and apply timezone
   char buf[200];
@@ -2263,18 +2513,46 @@ static esp_err_t timezone_config_post_handler(httpd_req_t *req) {
 
   // Validate
   if (strlen(timezone) == 0) {
-    const char *html = "<html><body><h1>❌ خطأ: المنطقة الزمنية مطلوبة</h1><a "
-                       "href='/timezoneConfig'>العودة</a></body></html>";
-    return httpd_resp_send(req, html, strlen(html));
+    httpd_resp_set_type(req, "text/html; charset=UTF-8");
+    send_conf_header(req, i18n_tr(STR_ERROR, lang), "/timezoneConfig", 5);
+    httpd_resp_sendstr_chunk(req, "<div class='conf-icon'>&#10060;</div>");
+    char h1_err[256];
+    snprintf(h1_err, sizeof(h1_err), "<h1 class='conf-title'>%s</h1>", i18n_tr(STR_ERROR, lang));
+    httpd_resp_sendstr_chunk(req, h1_err);
+    char p_err[256];
+    snprintf(p_err, sizeof(p_err), "<p class='conf-msg'>%s</p>",
+             (lang == LANG_FR) ? "Le fuseau horaire est requis" :
+             (lang == LANG_EN) ? "Time zone is required" :
+             "المنطقة الزمنية مطلوبة");
+    httpd_resp_sendstr_chunk(req, p_err);
+    char btn_err[256];
+    snprintf(btn_err, sizeof(btn_err), "<div class='conf-btns'><a href='/timezoneConfig'>%s</a></div>", i18n_tr(STR_RETRY, lang));
+    httpd_resp_sendstr_chunk(req, btn_err);
+    httpd_resp_sendstr_chunk(req, HTML_CONF_FOOTER);
+    return httpd_resp_sendstr_chunk(req, NULL);
   }
 
   // Save to NVS
   esp_err_t err = nvs_write_string("timezone", timezone);
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "Failed to save timezone to NVS: %s", esp_err_to_name(err));
-    const char *html = "<html><body><h1>❌ خطأ: فشل حفظ المنطقة الزمنية</h1><a "
-                       "href='/timezoneConfig'>العودة</a></body></html>";
-    return httpd_resp_send(req, html, strlen(html));
+    httpd_resp_set_type(req, "text/html; charset=UTF-8");
+    send_conf_header(req, i18n_tr(STR_ERROR, lang), "/timezoneConfig", 5);
+    httpd_resp_sendstr_chunk(req, "<div class='conf-icon'>&#10060;</div>");
+    char h1_err[256];
+    snprintf(h1_err, sizeof(h1_err), "<h1 class='conf-title'>%s</h1>", i18n_tr(STR_ERROR, lang));
+    httpd_resp_sendstr_chunk(req, h1_err);
+    char p_err[256];
+    snprintf(p_err, sizeof(p_err), "<p class='conf-msg'>%s</p>",
+             (lang == LANG_FR) ? "Échec de l'enregistrement du fuseau horaire" :
+             (lang == LANG_EN) ? "Failed to save time zone" :
+             "فشل حفظ المنطقة الزمنية");
+    httpd_resp_sendstr_chunk(req, p_err);
+    char btn_err[256];
+    snprintf(btn_err, sizeof(btn_err), "<div class='conf-btns'><a href='/timezoneConfig'>%s</a></div>", i18n_tr(STR_RETRY, lang));
+    httpd_resp_sendstr_chunk(req, btn_err);
+    httpd_resp_sendstr_chunk(req, HTML_CONF_FOOTER);
+    return httpd_resp_sendstr_chunk(req, NULL);
   }
 
   // Apply timezone immediately using setenv (heap copy in libc, stack-safe)
@@ -2288,15 +2566,18 @@ static esp_err_t timezone_config_post_handler(httpd_req_t *req) {
   ESP_LOGI(TAG, "Timezone saved to NVS and applied: %s", timezone);
 
   httpd_resp_set_type(req, "text/html; charset=UTF-8");
-  send_conf_header(req, "تم الحفظ", "/", 3);
+  send_conf_header(req, i18n_tr(STR_SUCCESS, lang), "/", 3);
   httpd_resp_sendstr_chunk(req, "<div class='conf-icon'>&#9989;</div>");
-  httpd_resp_sendstr_chunk(
-      req, "<h1 class='conf-title'>تم حفظ المنطقة الزمنية</h1>");
-  httpd_resp_sendstr_chunk(req,
-                           "<p class='conf-msg'>سيتم تطبيق التغييرات فورا</p>");
+  char ok_h1[256];
+  snprintf(ok_h1, sizeof(ok_h1), "<h1 class='conf-title'>%s</h1>", i18n_tr(STR_TZ_SAVED_TITLE, lang));
+  httpd_resp_sendstr_chunk(req, ok_h1);
+  char ok_p[256];
+  snprintf(ok_p, sizeof(ok_p), "<p class='conf-msg'>%s</p>", i18n_tr(STR_TZ_APPLIED_IMMEDIATELY, lang));
+  httpd_resp_sendstr_chunk(req, ok_p);
   httpd_resp_sendstr_chunk(req, "<div class='spinner'></div>");
-  httpd_resp_sendstr_chunk(
-      req, "<p style='color:#999;font-size:0.95rem'>جاري العودة...</p>");
+  char ret_p[256];
+  snprintf(ret_p, sizeof(ret_p), "<p style='color:#999;font-size:0.95rem'>%s</p>", i18n_tr(STR_RETURNING, lang));
+  httpd_resp_sendstr_chunk(req, ret_p);
   httpd_resp_sendstr_chunk(req, HTML_CONF_FOOTER);
   return httpd_resp_sendstr_chunk(req, NULL);
 }
@@ -2307,105 +2588,124 @@ static esp_err_t current_config_get_handler(httpd_req_t *req) {
     httpd_resp_set_hdr(req, "Location", "/");
     return httpd_resp_send(req, NULL, 0);
   }
+  app_lang_t lang = i18n_get_req_lang(req);
   // Get current calibration and thresholds
   const adc_calibration_t *calib = adc_get_calibration();
   const current_thresholds_t *thresh = adc_get_thresholds();
   httpd_resp_set_type(req, "text/html; charset=UTF-8");
-  httpd_resp_sendstr_chunk(req,
-                           "<!DOCTYPE html><html lang='ar' dir='rtl'><head>");
-  httpd_resp_sendstr_chunk(req,
-                           "<meta charset='UTF-8'><meta name='viewport' "
-                           "content='width=device-width,initial-scale=1.0'>");
+  char html_head[256];
+  snprintf(html_head, sizeof(html_head),
+           "<!DOCTYPE html><html lang='%s' dir='%s'><head>"
+           "<meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1.0'>"
+           "<title>%s</title>",
+           i18n_code(lang), i18n_dir(lang), i18n_tr(STR_CURR_TITLE, lang));
+  httpd_resp_sendstr_chunk(req, html_head);
   httpd_resp_sendstr_chunk(req, HTML_STYLE);
   httpd_resp_sendstr_chunk(req, "</head><body><div class='container'>");
+  i18n_send_lang_bar(req, lang);
+
   // Card Start
   httpd_resp_sendstr_chunk(
       req, "<div class='card' style='max-width:600px;margin:0 auto'>");
   httpd_resp_sendstr_chunk(
       req, "<span class='card-icon' style='color:#3498db'>⚙️</span>");
-  httpd_resp_sendstr_chunk(req, "<h2>إعدادات مستشعر التيار</h2>");
+  char h2_buf[256];
+  snprintf(h2_buf, sizeof(h2_buf), "<h2>%s</h2>", i18n_tr(STR_CURR_TITLE, lang));
+  httpd_resp_sendstr_chunk(req, h2_buf);
+
   // Info box
-  char buf[1024]; // Increased for Arabic UTF-8 text
+  char buf[1024];
   snprintf(
       buf, sizeof(buf),
-      "<div "
-      "style='background:#e8f4f8;padding:12px;border-radius:8px;margin:15px 0'>"
-      "<p style='margin:0;color:#2980b9'><strong>📊 الحالة "
-      "الحالية:</strong></p>"
-      "<p style='margin:5px 0'>النقطة الصفرية: <strong>%.1f</strong> (متوقع "
-      "~2048)</p>"
-      "<p style='margin:5px 0'>عامل التعديل: <strong>%.3f</strong></p>"
-      "<p style='margin:0'>الحالة: %s</p></div>",
-      calib->zero_offset, calib->scale_factor,
-      (calib->is_valid == 1) ? "✅ محفوظ" : "⚠️ افتراضي");
+      "<div style='background:#e8f4f8;padding:12px;border-radius:8px;margin:15px 0'>"
+      "<p style='margin:0;color:#2980b9'><strong>%s</strong></p>"
+      "<p style='margin:5px 0'>%s <strong>%.1f</strong> (expected ~2048)</p>"
+      "<p style='margin:5px 0'>%s <strong>%.3f</strong></p>"
+      "<p style='margin:0'>Status: %s</p></div>",
+      i18n_tr(STR_CURR_CURRENT_STATUS, lang),
+      i18n_tr(STR_CURR_ZERO_POINT, lang), calib->zero_offset,
+      i18n_tr(STR_CURR_SCALE_FACTOR, lang), calib->scale_factor,
+      (calib->is_valid == 1) ? i18n_tr(STR_CURR_CALIB_SAVED, lang) : i18n_tr(STR_CURR_CALIB_DEFAULT, lang));
   httpd_resp_sendstr_chunk(req, buf);
-  // Form Start - HIDDEN in Classic
+
+  // Form Start
   httpd_resp_sendstr_chunk(
       req,
       "<div class='threshold-section'>"
-      "<form action='/currentConfig' method='POST' style='text-align:right'>");
+      "<form action='/currentConfig' method='POST'>");
   // Scale Factor Input
   snprintf(buf, sizeof(buf),
-           "<label style='display:block;margin:15px 0 5px'>عامل التصحيح (Scale "
-           "Factor):</label>"
+           "<label style='display:block;margin:15px 0 5px'>%s</label>"
            "<input type='number' name='scale' step='0.001' min='0.5' max='1.5' "
            "value='%.3f' style='width:100%%' required>",
+           i18n_tr(STR_CURR_SCALE_FACTOR, lang),
            calib->scale_factor);
   httpd_resp_sendstr_chunk(req, buf);
+
   // Thresholds Section
-  httpd_resp_sendstr_chunk(
-      req, "<h3 style='margin-top:25px;color:#2c3e50'>🎚️ العتبات</h3>");
+  char th_hdr[256];
+  snprintf(th_hdr, sizeof(th_hdr), "<h3 style='margin-top:25px;color:#2c3e50'>%s</h3>", i18n_tr(STR_CURR_THRESHOLDS, lang));
+  httpd_resp_sendstr_chunk(req, th_hdr);
+
   // Min Load
   snprintf(
       buf, sizeof(buf),
-      "<label style='display:block;margin:15px 0 5px'>الحد الأدنى للحمل "
-      "(A):</label>"
+      "<label style='display:block;margin:15px 0 5px'>%s</label>"
       "<input type='number' name='min_load' step='0.01' min='0.01' max='10' "
       "value='%.2f' style='width:100%%' required>",
+      i18n_tr(STR_CURR_MIN_LOAD, lang),
       thresh->min_load);
   httpd_resp_sendstr_chunk(req, buf);
+
   // Anomaly Threshold
   snprintf(
       buf, sizeof(buf),
-      "<label style='display:block;margin:15px 0 5px'>عتبة التسرب (A):</label>"
+      "<label style='display:block;margin:15px 0 5px'>%s</label>"
       "<input type='number' name='anomaly' step='0.01' min='0.01' max='10' "
       "value='%.2f' style='width:100%%' required>",
+      i18n_tr(STR_CURR_ANOMALY, lang),
       thresh->anomaly_threshold);
   httpd_resp_sendstr_chunk(req, buf);
+
   // Max Critical
   snprintf(buf, sizeof(buf),
-           "<label style='display:block;margin:15px 0 5px'>الحد الأقصى الحرج "
-           "(A):</label>"
+           "<label style='display:block;margin:15px 0 5px'>%s</label>"
            "<input type='number' name='max_critical' step='0.01' min='0.01' "
            "max='10' "
            "value='%.2f' style='width:100%%' required>",
+           i18n_tr(STR_CURR_MAX_CRITICAL, lang),
            thresh->max_critical);
   httpd_resp_sendstr_chunk(req, buf);
 
   // Save Button
-  httpd_resp_sendstr_chunk(
-      req,
-      "<input type='submit' value='حفظ الإعدادات' "
-      "style='margin-top:25px;width:100%;font-size:1.1rem;font-weight:bold'>");
+  char save_btn[256];
+  snprintf(save_btn, sizeof(save_btn),
+           "<input type='submit' value='%s' "
+           "style='margin-top:25px;width:100%%;font-size:1.1rem;font-weight:bold'>",
+           i18n_tr(STR_SAVE_SETTINGS, lang));
+  httpd_resp_sendstr_chunk(req, save_btn);
   httpd_resp_sendstr_chunk(req, "</form>");
+
   // Recalibrate Zero Button
   httpd_resp_sendstr_chunk(
       req,
       "<form action='/recalibrateZero' method='POST' style='margin-top:15px'>");
   httpd_resp_sendstr_chunk(
-      req, "<input type='submit' value='🔄 إعادة معايرة الصفر' "
+      req, "<input type='submit' value='🔄 Zero Calibration' "
            "style='width:100%;background:#f39c12;font-weight:bold'>");
   httpd_resp_sendstr_chunk(req, "</form></div>");
+
   // Warning Note
-  httpd_resp_sendstr_chunk(req, "<p "
-                                "style='color:#856404;font-size:0.85rem;text-"
-                                "align:center;margin-top:15px'>"
-                                "⚠️ تأكد من فصل الحمل قبل إعادة المعايرة</p>");
+  httpd_resp_sendstr_chunk(req, "<p style='color:#856404;font-size:0.85rem;text-align:center;margin-top:15px'>"
+                                "⚠️ Disconnect load before recalibrating</p>");
   httpd_resp_sendstr_chunk(req, "</div>"); // Close Card
+
   // Navigation
-  httpd_resp_sendstr_chunk(req,
-                           "<div class='nav-menu' style='margin-top:20px'><a "
-                           "href='/'>العودة</a></div>");
+  char nav_menu[256];
+  snprintf(nav_menu, sizeof(nav_menu),
+           "<div class='nav-menu' style='margin-top:20px'><a href='/'>%s</a></div>",
+           i18n_tr(STR_BACK_TO_DASHBOARD, lang));
+  httpd_resp_sendstr_chunk(req, nav_menu);
   httpd_resp_sendstr_chunk(req, "</div></body></html>");
   return httpd_resp_sendstr_chunk(req, NULL);
 }
@@ -2470,28 +2770,30 @@ static esp_err_t recalibrate_zero_handler(httpd_req_t *req) {
     httpd_resp_set_hdr(req, "Location", "/");
     return httpd_resp_send(req, NULL, 0);
   }
-  // Disabled in Classic
+  app_lang_t lang = i18n_get_req_lang(req);
   float new_zero = 0; // adc_calibrate_zero();
   adc_save_calibration();
 
   // Use modern confirmation template
   httpd_resp_set_type(req, "text/html; charset=UTF-8");
-  send_conf_header(req, "معايرة المستشعر", "/", 3);
+  send_conf_header(req, i18n_tr(STR_CURR_TITLE, lang), "/", 3);
   httpd_resp_sendstr_chunk(req, "<div class='conf-icon'>&#128276;</div>");
-  httpd_resp_sendstr_chunk(req,
-                           "<h1 class='conf-title'>تمت المعايرة بنجاح</h1>");
+  char ok_h1[256];
+  snprintf(ok_h1, sizeof(ok_h1), "<h1 class='conf-title'>%s</h1>", i18n_tr(STR_SUCCESS, lang));
+  httpd_resp_sendstr_chunk(req, ok_h1);
 
-  char msg[200];
+  char msg[256];
   snprintf(msg, sizeof(msg),
-           "<p class='conf-msg'>النقطة الصفرية الجديدة: <strong "
-           "style='color:#667eea'>%.1f</strong><br>"
-           "تم حفظ المعايرة في الذاكرة الدائمة</p>",
-           new_zero);
+           "<p class='conf-msg'>%s: <strong style='color:#667eea'>%.1f</strong><br>%s</p>",
+           i18n_tr(STR_CURR_ZERO_POINT, lang),
+           new_zero,
+           i18n_tr(STR_SAVED_SUCCESS, lang));
   httpd_resp_sendstr_chunk(req, msg);
 
   httpd_resp_sendstr_chunk(req, "<div class='spinner'></div>");
-  httpd_resp_sendstr_chunk(req, "<p style='color:#999;font-size:0.95rem'>جاري "
-                                "العودة إلى لوحة التحكم...</p>");
+  char ret_p[256];
+  snprintf(ret_p, sizeof(ret_p), "<p style='color:#999;font-size:0.95rem'>%s</p>", i18n_tr(STR_RETURNING, lang));
+  httpd_resp_sendstr_chunk(req, ret_p);
   httpd_resp_sendstr_chunk(req, HTML_CONF_FOOTER);
 
   return httpd_resp_sendstr_chunk(req, NULL);
@@ -2588,9 +2890,10 @@ static esp_err_t settings_api_post_handler(httpd_req_t *req) {
   cJSON *tz = cJSON_GetObjectItem(root, "timezone");
   if (tz && cJSON_IsString(tz)) {
     nvs_write_string("timezone", tz->valuestring);
-    // Apply immediate?
     setenv("TZ", tz->valuestring, 1);
     tzset();
+    extern void ds3231_sync_from_system(void);
+    ds3231_sync_from_system();
   }
 
   // Thresholds
@@ -2653,53 +2956,79 @@ static esp_err_t update_get_handler(httpd_req_t *req) {
     return httpd_resp_send(req, NULL, 0);
   }
 
+  app_lang_t lang = i18n_get_req_lang(req);
+
   httpd_resp_set_type(req, "text/html; charset=UTF-8");
-  httpd_resp_sendstr_chunk(req,
-                           "<!DOCTYPE html><html lang='ar' dir='rtl'><head>");
-  httpd_resp_sendstr_chunk(req, "<meta charset='UTF-8'>");
-  httpd_resp_sendstr_chunk(
-      req,
-      "<meta name='viewport' content='width=device-width,initial-scale=1.0'>");
+  char html_head[256];
+  snprintf(html_head, sizeof(html_head),
+           "<!DOCTYPE html><html lang='%s' dir='%s'><head>"
+           "<meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1.0'>"
+           "<title>%s</title>",
+           i18n_code(lang), i18n_dir(lang), i18n_tr(STR_OTA_TITLE, lang));
+  httpd_resp_sendstr_chunk(req, html_head);
   httpd_resp_sendstr_chunk(req, HTML_STYLE);
   httpd_resp_sendstr_chunk(req, "</head><body><div class='container'>");
+  i18n_send_lang_bar(req, lang);
+
   httpd_resp_sendstr_chunk(
       req, "<div class='card' style='max-width:500px;margin:0 auto'>");
   httpd_resp_sendstr_chunk(req, "<span class='card-icon'>🔄</span>");
-  httpd_resp_sendstr_chunk(req, "<h2>تحديث البرنامج (OTA)</h2>");
+  char h2_buf[256];
+  snprintf(h2_buf, sizeof(h2_buf), "<h2>%s</h2>", i18n_tr(STR_OTA_TITLE, lang));
+  httpd_resp_sendstr_chunk(req, h2_buf);
 
   httpd_resp_sendstr_chunk(
-      req, "<div style='background:#fff3cd;border:1px solid "
-           "#ffc107;padding:15px;border-radius:8px;margin:15px 0;'>");
-  httpd_resp_sendstr_chunk(
-      req, "<p style='margin:0;color:#856404;'>⚠️ <strong>تحذير:</strong> سيتم "
-           "إعادة تشغيل النظام بعد التحديث</p>");
+      req, "<div style='background:#fff3cd;border:1px solid #ffc107;padding:15px;border-radius:8px;margin:15px 0;'>");
+  char warn_buf[256];
+  snprintf(warn_buf, sizeof(warn_buf),
+           "<p style='margin:0;color:#856404;'>⚠️ <strong>%s</strong></p>",
+           (lang == LANG_FR) ? "Attention : Le système redémarrera après la mise à jour" :
+           (lang == LANG_EN) ? "Warning: The system will restart after firmware update" :
+           "تحذير: سيتم إعادة تشغيل النظام بعد التحديث");
+  httpd_resp_sendstr_chunk(req, warn_buf);
   httpd_resp_sendstr_chunk(req, "</div>");
 
-  httpd_resp_sendstr_chunk(req, "<form method='POST' action='/update' "
-                                "enctype='multipart/form-data'>");
+  httpd_resp_sendstr_chunk(req, "<form method='POST' action='/update' enctype='multipart/form-data'>");
 
   // SHA256 FIRST - so it arrives before firmware in multipart!
-  httpd_resp_sendstr_chunk(
-      req,
-      "<label style='margin-top:15px'>🔒 SHA256 Checksum (إلزامي):</label>");
+  char sha_lbl[256];
+  snprintf(sha_lbl, sizeof(sha_lbl),
+           "<label style='margin-top:15px'>🔒 %s</label>",
+           i18n_tr(STR_OTA_HASH_LABEL, lang));
+  httpd_resp_sendstr_chunk(req, sha_lbl);
   httpd_resp_sendstr_chunk(req,
                            "<input type='text' name='sha256' "
                            "pattern='[a-fA-F0-9]{64}' "
                            "maxlength='64' required "
-                           "placeholder='أدخل التجزئة SHA256' "
+                           "placeholder='64-char SHA256' "
                            "style='font-family:monospace;font-size:13px'>");
-  httpd_resp_sendstr_chunk(req, "<small style='color:#666;font-size:0.85rem'>"
-                                "احصل على التجزئة من ملف .bin.sha256</small>");
+  char hint_buf[256];
+  snprintf(hint_buf, sizeof(hint_buf),
+           "<small style='color:#666;font-size:0.85rem'>%s</small>",
+           i18n_tr(STR_OTA_HASH_HINT, lang));
+  httpd_resp_sendstr_chunk(req, hint_buf);
 
   // Firmware file SECOND
-  httpd_resp_sendstr_chunk(req, "<label>اختر ملف البرنامج (.bin):</label>");
+  char file_lbl[256];
+  snprintf(file_lbl, sizeof(file_lbl),
+           "<label>%s</label>",
+           i18n_tr(STR_OTA_FILE_LABEL, lang));
+  httpd_resp_sendstr_chunk(req, file_lbl);
   httpd_resp_sendstr_chunk(
       req, "<input type='file' name='firmware' accept='.bin' required>");
 
-  httpd_resp_sendstr_chunk(
-      req, "<button type='submit' class='btn-submit'>تحديث الآن</button>");
+  char submit_btn[256];
+  snprintf(submit_btn, sizeof(submit_btn),
+           "<button type='submit' class='btn-submit'>%s</button>",
+           i18n_tr(STR_OTA_SUBMIT, lang));
+  httpd_resp_sendstr_chunk(req, submit_btn);
   httpd_resp_sendstr_chunk(req, "</form>");
-  httpd_resp_sendstr_chunk(req, "<a href='/' class='btn-cancel'>إلغاء</a>");
+
+  char cancel_btn[256];
+  snprintf(cancel_btn, sizeof(cancel_btn),
+           "<a href='/' class='btn-cancel'>%s</a>",
+           i18n_tr(STR_CANCEL, lang));
+  httpd_resp_sendstr_chunk(req, cancel_btn);
   httpd_resp_sendstr_chunk(req, "</div></div></body></html>");
 
   return httpd_resp_sendstr_chunk(req, NULL);
@@ -2827,8 +3156,10 @@ static esp_err_t update_post_handler(httpd_req_t *req) {
           char *sha_value = strstr(sha_field, "\r\n\r\n");
           if (sha_value) {
             sha_value += 4; // Skip "\r\n\r\n"
+            while (*sha_value == ' ' || *sha_value == '\t') sha_value++;
             char *sha_end = strstr(sha_value, "\r\n");
             if (sha_end) {
+              while (sha_end > sha_value && (*(sha_end - 1) == ' ' || *(sha_end - 1) == '\t' || *(sha_end - 1) == '\r')) sha_end--;
               int sha_len = sha_end - sha_value;
               if (sha_len == 64) {
                 memcpy(expected_sha256, sha_value, 64);
@@ -3022,17 +3353,33 @@ static esp_err_t update_post_handler(httpd_req_t *req) {
   ESP_LOGI(TAG, "OTA update successful. Restarting...");
 
   // Send success response
+  app_lang_t lang = i18n_get_req_lang(req);
   httpd_resp_set_type(req, "text/html; charset=UTF-8");
-  send_conf_header(req, "نجاح", "/", 10);
+  send_conf_header(req, i18n_tr(STR_SUCCESS, lang), "/", 10);
   httpd_resp_sendstr_chunk(req, "<div class='conf-icon'>✅</div>");
-  httpd_resp_sendstr_chunk(req, "<h1 class='conf-title'>تم التحديث بنجاح</h1>");
-  httpd_resp_sendstr_chunk(
-      req, "<p class='conf-msg'>سيتم إعادة تشغيل النظام الآن...</p>");
+  char ok_h1[256];
+  snprintf(ok_h1, sizeof(ok_h1), "<h1 class='conf-title'>%s</h1>",
+           (lang == LANG_FR) ? "Mise à jour réussie !" :
+           (lang == LANG_EN) ? "Update Successful!" :
+           "تم التحديث بنجاح");
+  httpd_resp_sendstr_chunk(req, ok_h1);
+  char ok_p[512];
+  snprintf(ok_p, sizeof(ok_p),
+           "<p class='conf-msg'>%s</p>"
+           "<p style='margin-top:15px;font-size:1.05rem;color:#555;'>%s <span id='cd' style='font-weight:bold;color:#27ae60;'>10</span>s</p>"
+           "<script>let s=10;setInterval(()=>{s--;let e=document.getElementById('cd');if(e)e.innerText=s;if(s<=0)location.href='/';},1000);</script>",
+           (lang == LANG_FR) ? "Le firmware a été flashé avec succès !" :
+           (lang == LANG_EN) ? "Firmware flashed successfully!" :
+           "تم تثبيت النظام بنجاح!",
+           (lang == LANG_FR) ? "Redémarrage et retour à la page principale dans" :
+           (lang == LANG_EN) ? "Restarting and returning to dashboard in" :
+           "إعادة التشغيل والعودة للوحة التحكم خلال");
+  httpd_resp_sendstr_chunk(req, ok_p);
   httpd_resp_sendstr_chunk(req, HTML_CONF_FOOTER);
   httpd_resp_sendstr_chunk(req, NULL);
 
-  // Restart after a short delay
-  vTaskDelay(pdMS_TO_TICKS(1000));
+  // Generous delay to ensure TCP buffers flush and browser renders confirmation page
+  vTaskDelay(pdMS_TO_TICKS(3500));
   esp_restart();
 
   return ESP_OK;
@@ -3349,57 +3696,6 @@ static esp_err_t backup_restore_handler(httpd_req_t *req) {
   return ESP_OK;
 }
 
-static esp_err_t backup_page_handler(httpd_req_t *req) {
-  if (!is_authorized) {
-    httpd_resp_set_status(req, "302 Found");
-    httpd_resp_set_hdr(req, "Location", "/");
-    return httpd_resp_send(req, NULL, 0);
-  }
-
-  httpd_resp_set_type(req, "text/html; charset=utf-8");
-
-  // HTML Header (reuse from other pages)
-  send_conf_header(req, "Sauvegarde Config", "/", -1);
-
-  // Navigation menu (simplified)
-  httpd_resp_sendstr_chunk(req, "<nav><a href='/'>🏠 Accueil</a>");
-  httpd_resp_sendstr_chunk(req, "<a href='/settings'>⚙️ Paramètres</a>");
-  httpd_resp_sendstr_chunk(req, "<a href='/logout'>🚪 Déconnexion</a></nav>");
-
-  // Main content
-  httpd_resp_sendstr_chunk(req, "<main><h2>💾 Sauvegarde & Restauration</h2>");
-
-  // Download section
-  httpd_resp_sendstr_chunk(req, "<div class='card'>");
-  httpd_resp_sendstr_chunk(req, "<h3>📥 Télécharger Backup</h3>");
-  httpd_resp_sendstr_chunk(req,
-                           "<p>Exportez votre configuration complète en JSON "
-                           ":(timezone, calibration ADC).</p>");
-  httpd_resp_sendstr_chunk(
-      req, "<a href='/backup/download' class='button' download "
-           "style='background:#27ae60'>📥 Télécharger Configuration</a>");
-  httpd_resp_sendstr_chunk(req, "</div>");
-
-  // Upload section
-  httpd_resp_sendstr_chunk(req, "<div class='card'>");
-  httpd_resp_sendstr_chunk(req, "<h3>📤 Restaurer Configuration</h3>");
-  httpd_resp_sendstr_chunk(
-      req,
-      "<p>⚠️ Attention : Le système redémarrera après la restauration.</p>");
-  httpd_resp_sendstr_chunk(req, "<form method='POST' action='/backup/restore' "
-                                "enctype='multipart/form-data'>");
-  httpd_resp_sendstr_chunk(req, "<input type='file' name='config' "
-                                "accept='.json' required>");
-  httpd_resp_sendstr_chunk(
-      req,
-      "<button type='submit' style='background:#e67e22'>📤 Restaurer</button>");
-  httpd_resp_sendstr_chunk(req, "</form></div>");
-
-  httpd_resp_sendstr_chunk(req, "</main></body></html>");
-  httpd_resp_sendstr_chunk(req, NULL); // End chunked response
-
-  return ESP_OK;
-}
 
 // ========== Predictive Maintenance API Handler ==========
 #include "predictive_maintenance.h"
@@ -3593,277 +3889,635 @@ static const httpd_uri_t uri_power_get = {
 static const httpd_uri_t uri_power_post = {
     .uri = "/api/power", .method = HTTP_POST, .handler = api_power_post_handler};
 
-// ========== REST API Handlers for Android App ==========
-
-static esp_err_t schedule_api_handler(httpd_req_t *req) {
-  if (!is_authorized) {
-    httpd_resp_set_status(req, "401 Unauthorized");
-    return httpd_resp_send(req, "{\"error\":\"Unauthorized\"}", -1);
+// ========== Language Switcher API ==========
+static esp_err_t set_lang_handler(httpd_req_t *req) {
+  char query[64] = {0};
+  if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+    char val[16] = {0};
+    if (httpd_query_key_value(query, "lang", val, sizeof(val)) == ESP_OK) {
+      if (strcmp(val, "fr") == 0) {
+        i18n_set_default_lang(LANG_FR);
+      } else if (strcmp(val, "en") == 0) {
+        i18n_set_default_lang(LANG_EN);
+      } else if (strcmp(val, "ar") == 0) {
+        i18n_set_default_lang(LANG_AR);
+      }
+      char cookie_hdr[64];
+      snprintf(cookie_hdr, sizeof(cookie_hdr), "lang=%s; Path=/; Max-Age=31536000", val);
+      httpd_resp_set_hdr(req, "Set-Cookie", cookie_hdr);
+    }
   }
-
-  char buf[4096]; // Buffer for schedule JSON
-  int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
-  if (ret <= 0) return ESP_FAIL;
-  buf[ret] = '\0';
-
-  // Naive check if it looks like schedule JSON
-  if (strstr(buf, "\"schedule\"") == NULL) {
-    return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid schedule JSON");
-  }
-
-  // Use the existing logic from upload_schedule_handler to parse and save
-  // (We skip the multipart handling part since this is raw JSON POST)
-  
-  // NOTE: In a real implementation, I'd refactor upload_schedule_handler to use a shared parser.
-  // For emergency recovery, we'll implement a basic version that triggers a save if logic matches.
-  
-  ESP_LOGI(TAG, "Schedule API received %d bytes", ret);
-  
-  // For now, return success to let the app continue, but in production this should parse JSON
   httpd_resp_set_type(req, "application/json");
-  return httpd_resp_send(req, "{\"status\":\"ok\"}", -1);
+  return httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
 }
 
-static esp_err_t wifi_scan_handler(httpd_req_t *req) {
-  if (!is_authorized) return ESP_FAIL;
-  
-  wifi_scan_config_t scan_config = { .ssid = 0, .bssid = 0, .channel = 0, .show_hidden = true };
-  esp_wifi_scan_start(&scan_config, true);
-  
-  uint16_t ap_count = 0;
-  esp_wifi_scan_get_ap_num(&ap_count);
-  if (ap_count > 20) ap_count = 20;
-  
-  wifi_ap_record_t *ap_list = malloc(sizeof(wifi_ap_record_t) * ap_count);
-  esp_wifi_scan_get_ap_records(&ap_count, ap_list);
-  
-  cJSON *root = cJSON_CreateObject();
-  cJSON *aps = cJSON_AddArrayToObject(root, "aps");
-  for (int i = 0; i < ap_count; i++) {
-    cJSON *ap = cJSON_CreateObject();
-    cJSON_AddStringToObject(ap, "ssid", (char *)ap_list[i].ssid);
-    cJSON_AddNumberToObject(ap, "rssi", ap_list[i].rssi);
-    cJSON_AddNumberToObject(ap, "authmode", ap_list[i].authmode);
-    cJSON_AddItemToArray(aps, ap);
+static esp_err_t backup_page_handler(httpd_req_t *req) {
+  if (!is_authorized) {
+    httpd_resp_set_status(req, "302 Found");
+    httpd_resp_set_hdr(req, "Location", "/");
+    return httpd_resp_send(req, NULL, 0);
   }
-  
-  char *json = cJSON_PrintUnformatted(root);
-  httpd_resp_set_type(req, "application/json");
-  httpd_resp_send(req, json, strlen(json));
-  
-  cJSON_Delete(root);
-  free(json);
-  free(ap_list);
+
+  app_lang_t lang = i18n_get_req_lang(req);
+
+  httpd_resp_set_type(req, "text/html; charset=utf-8");
+
+  send_conf_header(req, i18n_tr(STR_BACKUP_TITLE, lang), "/", -1);
+  i18n_send_lang_bar(req, lang);
+
+  // Navigation menu
+  char nav_buf[512];
+  snprintf(nav_buf, sizeof(nav_buf),
+           "<nav><a href='/'>🏠 %s</a><a href='/settings'>⚙️ %s</a><a href='/logout'>🚪 %s</a></nav>",
+           i18n_tr(STR_BACK_TO_DASHBOARD, lang),
+           i18n_tr(STR_NAV_SETTINGS, lang),
+           i18n_tr(STR_NAV_LOGOUT, lang));
+  httpd_resp_sendstr_chunk(req, nav_buf);
+
+  // Main content
+  char main_h2[256];
+  snprintf(main_h2, sizeof(main_h2), "<main><h2>%s</h2>", i18n_tr(STR_BACKUP_TITLE, lang));
+  httpd_resp_sendstr_chunk(req, main_h2);
+
+  // Download section
+  httpd_resp_sendstr_chunk(req, "<div class='card'>");
+  char dl_h3[256];
+  snprintf(dl_h3, sizeof(dl_h3), "<h3>%s</h3>", i18n_tr(STR_BACKUP_DOWNLOAD_TITLE, lang));
+  httpd_resp_sendstr_chunk(req, dl_h3);
+  char dl_desc[256];
+  snprintf(dl_desc, sizeof(dl_desc), "<p>%s</p>", i18n_tr(STR_BACKUP_DOWNLOAD_DESC, lang));
+  httpd_resp_sendstr_chunk(req, dl_desc);
+  char dl_btn[256];
+  snprintf(dl_btn, sizeof(dl_btn),
+           "<a href='/backup/download' class='button' download style='background:#27ae60'>%s</a>",
+           i18n_tr(STR_BACKUP_DOWNLOAD_BTN, lang));
+  httpd_resp_sendstr_chunk(req, dl_btn);
+  httpd_resp_sendstr_chunk(req, "</div>");
+
+  // Upload section
+  httpd_resp_sendstr_chunk(req, "<div class='card'>");
+  char rest_h3[256];
+  snprintf(rest_h3, sizeof(rest_h3), "<h3>%s</h3>", i18n_tr(STR_RESTORE_TITLE, lang));
+  httpd_resp_sendstr_chunk(req, rest_h3);
+  char rest_desc[256];
+  snprintf(rest_desc, sizeof(rest_desc), "<p>%s</p>", i18n_tr(STR_RESTORE_DESC, lang));
+  httpd_resp_sendstr_chunk(req, rest_desc);
+  httpd_resp_sendstr_chunk(req, "<form method='POST' action='/backup/restore' enctype='multipart/form-data'>");
+  httpd_resp_sendstr_chunk(req, "<input type='file' name='config' accept='.json' required>");
+  char rest_btn[256];
+  snprintf(rest_btn, sizeof(rest_btn),
+           "<button type='submit' style='background:#e67e22'>%s</button>",
+           i18n_tr(STR_RESTORE_BTN, lang));
+  httpd_resp_sendstr_chunk(req, rest_btn);
+  httpd_resp_sendstr_chunk(req, "</form></div>");
+
+  httpd_resp_sendstr_chunk(req, "</main></body></html>");
+  httpd_resp_sendstr_chunk(req, NULL);
+
   return ESP_OK;
 }
 
-// ========== Camera Proxy Handlers ==========
-
-static esp_err_t save_cam_ip_handler(httpd_req_t *req) {
-  char buf[128];
-  int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
-  if (ret <= 0) return ESP_FAIL;
-  buf[ret] = '\0';
-  
-  char ip[64] = "";
-  if (httpd_query_key_value(buf, "ip", ip, sizeof(ip)) == ESP_OK) {
-    nvs_write_string("cam_ip", ip);
-    ESP_LOGI(TAG, "Saved Camera IP: %s", ip);
-  }
-  
-  httpd_resp_set_status(req, "302 Found");
-  httpd_resp_set_hdr(req, "Location", "/");
-  return httpd_resp_send(req, NULL, 0);
-}
-
-static esp_err_t check_proxy_status_handler(httpd_req_t *req) {
-  httpd_resp_set_type(req, "application/json");
-  return httpd_resp_send(req, "{\"status\":\"active\"}", -1);
-}
-
-static esp_err_t cam_proxy_handler(httpd_req_t *req) {
-  // Minimal proxy implementation or redirect
-  char cam_ip[32] = "esp32-cam.local";
-  nvs_read_string("cam_ip", cam_ip, sizeof(cam_ip));
-  
-  char redirect_url[128];
-  snprintf(redirect_url, sizeof(redirect_url), "http://%s%s", cam_ip, req->uri + 10); // Skip /cam_proxy
-  
-  httpd_resp_set_status(req, "302 Found");
-  httpd_resp_set_hdr(req, "Location", redirect_url);
-  return httpd_resp_send(req, NULL, 0);
-}
-
-static esp_err_t debug_cam_handler(httpd_req_t *req) {
-  return httpd_resp_send(req, "Camera Debug Page", -1);
-}
-
-// ========== URI Structures Definition ==========
-
+// ========== URI Handlers Registration ==========
 static const httpd_uri_t uri_root = {
     .uri = "/", .method = HTTP_GET, .handler = root_get_handler};
+
 static const httpd_uri_t uri_login_post = {
     .uri = "/login", .method = HTTP_POST, .handler = login_post_handler};
+
 static const httpd_uri_t uri_logout = {
     .uri = "/logout", .method = HTTP_GET, .handler = logout_handler};
+
 static const httpd_uri_t uri_settings = {
     .uri = "/settings", .method = HTTP_GET, .handler = settings_get_handler};
+
 static const httpd_uri_t uri_save = {
     .uri = "/save", .method = HTTP_POST, .handler = save_post_handler};
+
 static const httpd_uri_t uri_download_schedule = {
-    .uri = "/downloadSchedule", .method = HTTP_GET, .handler = download_schedule_handler};
-static const httpd_uri_t uri_upload_schedule = {
-    .uri = "/uploadSchedule", .method = HTTP_POST, .handler = upload_schedule_handler};
+    .uri = "/downloadSchedule",
+    .method = HTTP_GET,
+    .handler = download_schedule_handler};
+
+static const httpd_uri_t uri_upload_schedule = {.uri = "/uploadSchedule",
+                                                .method = HTTP_POST,
+                                                .handler =
+                                                    upload_schedule_handler};
+
 static const httpd_uri_t uri_status = {
     .uri = "/status", .method = HTTP_GET, .handler = status_api_handler};
+
 static const httpd_uri_t uri_time = {
     .uri = "/time", .method = HTTP_GET, .handler = time_api_handler};
+
+// Phase 1 - New URI handlers
 static const httpd_uri_t uri_about = {
     .uri = "/about", .method = HTTP_GET, .handler = about_handler};
+
 static const httpd_uri_t uri_restart = {
     .uri = "/restart", .method = HTTP_GET, .handler = restart_handler};
-static const httpd_uri_t uri_factory_reset = {
-    .uri = "/factoryReset", .method = HTTP_GET, .handler = factory_reset_handler};
+
+static const httpd_uri_t uri_factory_reset = {.uri = "/factoryReset",
+                                              .method = HTTP_GET,
+                                              .handler = factory_reset_handler};
+
 static const httpd_uri_t uri_change_password_get = {
-    .uri = "/changePassword", .method = HTTP_GET, .handler = change_password_get_handler};
+    .uri = "/changePassword",
+    .method = HTTP_GET,
+    .handler = change_password_get_handler};
+
 static const httpd_uri_t uri_change_password_post = {
-    .uri = "/changePassword", .method = HTTP_POST, .handler = change_password_post_handler};
-static const httpd_uri_t uri_wifi_config_get = {
-    .uri = "/wifiConfig", .method = HTTP_GET, .handler = wifi_config_get_handler};
-static const httpd_uri_t uri_wifi_config_post = {
-    .uri = "/wifiConfig", .method = HTTP_POST, .handler = wifi_config_post_handler};
+    .uri = "/changePassword",
+    .method = HTTP_POST,
+    .handler = change_password_post_handler};
+
+static const httpd_uri_t uri_wifi_config_get = {.uri = "/wifiConfig",
+                                                .method = HTTP_GET,
+                                                .handler =
+                                                    wifi_config_get_handler};
+
+static const httpd_uri_t uri_wifi_config_post = {.uri = "/wifiConfig",
+                                                 .method = HTTP_POST,
+                                                 .handler =
+                                                     wifi_config_post_handler};
+
 static const httpd_uri_t uri_timezone_config_get = {
-    .uri = "/timezoneConfig", .method = HTTP_GET, .handler = timezone_config_get_handler};
+    .uri = "/timezoneConfig",
+    .method = HTTP_GET,
+    .handler = timezone_config_get_handler};
+
 static const httpd_uri_t uri_timezone_config_post = {
-    .uri = "/timezoneConfig", .method = HTTP_POST, .handler = timezone_config_post_handler};
+    .uri = "/timezoneConfig",
+    .method = HTTP_POST,
+    .handler = timezone_config_post_handler};
 static const httpd_uri_t uri_current_config_get = {
-    .uri = "/currentConfig", .method = HTTP_GET, .handler = current_config_get_handler};
-static const httpd_uri_t uri_schedule_api = {
-    .uri = "/api/schedule", .method = HTTP_POST, .handler = schedule_api_handler};
-static const httpd_uri_t uri_schedule_api_get = {
-    .uri = "/api/schedule", .method = HTTP_GET, .handler = download_schedule_handler};
+    .uri = "/currentConfig",
+    .method = HTTP_GET,
+    .handler = current_config_get_handler};
 static const httpd_uri_t uri_current_config_post = {
-    .uri = "/currentConfig", .method = HTTP_POST, .handler = current_config_post_handler};
-static const httpd_uri_t uri_recalibrate_zero = {
-    .uri = "/recalibrateZero", .method = HTTP_POST, .handler = recalibrate_zero_handler};
+    .uri = "/currentConfig",
+    .method = HTTP_POST,
+    .handler = current_config_post_handler};
+static const httpd_uri_t uri_recalibrate_zero = {.uri = "/recalibrateZero",
+                                                 .method = HTTP_POST,
+                                                 .handler =
+                                                     recalibrate_zero_handler};
+
 static const httpd_uri_t uri_update_get = {
     .uri = "/update", .method = HTTP_GET, .handler = update_get_handler};
+
 static const httpd_uri_t uri_update_post = {
     .uri = "/update", .method = HTTP_POST, .handler = update_post_handler};
+
 static const httpd_uri_t uri_logs = {
     .uri = "/logs", .method = HTTP_GET, .handler = logs_handler};
-static esp_err_t set_datetime_handler(httpd_req_t *req) {
-    char content[256];
-    int received = httpd_req_recv(req, content, sizeof(content) - 1);
-    
-    if (received <= 0) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No data received");
-        return ESP_FAIL;
-    }
-    content[received] = '\0';
-    
-    cJSON *root = cJSON_Parse(content);
-    if (!root) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON format");
-        return ESP_FAIL;
-    }
-
-    cJSON *item;
-    int year = ((item = cJSON_GetObjectItem(root, "year")) && cJSON_IsNumber(item)) ? item->valueint : 2026;
-    int month = ((item = cJSON_GetObjectItem(root, "month")) && cJSON_IsNumber(item)) ? item->valueint : 1;
-    int day = ((item = cJSON_GetObjectItem(root, "day")) && cJSON_IsNumber(item)) ? item->valueint : 1;
-    int hour = ((item = cJSON_GetObjectItem(root, "hour")) && cJSON_IsNumber(item)) ? item->valueint : 0;
-    int minute = ((item = cJSON_GetObjectItem(root, "minute")) && cJSON_IsNumber(item)) ? item->valueint : 0;
-    int second = ((item = cJSON_GetObjectItem(root, "second")) && cJSON_IsNumber(item)) ? item->valueint : 0;
-
-    cJSON *tz_item = cJSON_GetObjectItem(root, "tz_offset");
-    if (tz_item && cJSON_IsNumber(tz_item)) {
-        int offset = tz_item->valueint; // 0 = GMT0, -60 = GMT+1
-        const char *target_tz = NULL;
-        if (offset == 0) {
-            target_tz = "GMT0";
-        } else if (offset == -60) {
-            target_tz = "CET-1";
-        } else if (offset == -120) {
-            target_tz = "EET-2";
-        }
-        if (target_tz) {
-            nvs_write_string("timezone", target_tz);
-            setenv("TZ", target_tz, 1);
-            tzset();
-            ESP_LOGI(TAG, "Timezone synced with client device (offset %d min -> %s)", offset, target_tz);
-        }
-    }
-    cJSON_Delete(root);
-
-    if (year < 2000 || year > 2099 || month < 1 || month > 12 || 
-        day < 1 || day > 31 || hour < 0 || hour > 23 || 
-        minute < 0 || minute > 59 || second < 0 || second > 59) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid date/time values");
-        return ESP_FAIL;
-    }
-    
-    struct tm timeinfo = {
-        .tm_year = year - 1900,
-        .tm_mon = month - 1,
-        .tm_mday = day,
-        .tm_hour = hour,
-        .tm_min = minute,
-        .tm_sec = second,
-        .tm_isdst = -1
-    };
-    
-    time_t t = mktime(&timeinfo);
-    struct timeval tv = { .tv_sec = t, .tv_usec = 0 };
-    settimeofday(&tv, NULL);
-    
-    extern void ds3231_sync_from_system(void);
-    ds3231_sync_from_system();
-    
-    extern bool g_is_time_synced;
-    g_is_time_synced = true;
-    
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_sendstr(req, "{\"status\":\"ok\",\"message\":\"Time set successfully\"}");
-    ESP_LOGI("HTTP_SRV", "Manual time set: %04d-%02d-%02d %02d:%02d:%02d", year, month, day, hour, minute, second);
-    return ESP_OK;
-}
 
 static const httpd_uri_t uri_backup_page = {
     .uri = "/backup", .method = HTTP_GET, .handler = backup_page_handler};
-static const httpd_uri_t uri_backup_download = {
-    .uri = "/backup/download", .method = HTTP_GET, .handler = backup_download_handler};
-static const httpd_uri_t uri_backup_restore = {
-    .uri = "/backup/restore", .method = HTTP_POST, .handler = backup_restore_handler};
-static const httpd_uri_t uri_settings_api_get = {
-    .uri = "/api/settings", .method = HTTP_GET, .handler = settings_api_get_handler};
-static const httpd_uri_t uri_settings_api_post = {
-    .uri = "/api/settings", .method = HTTP_POST, .handler = settings_api_post_handler};
-static const httpd_uri_t uri_wifi_scan = {
-    .uri = "/api/wifi_scan", .method = HTTP_GET, .handler = wifi_scan_handler};
 
-// Camera Proxies
+static const httpd_uri_t uri_set_lang = {
+    .uri = "/setLang", .method = HTTP_GET, .handler = set_lang_handler};
+
+static const httpd_uri_t uri_backup_download = {.uri = "/backup/download",
+                                                .method = HTTP_GET,
+                                                .handler =
+                                                    backup_download_handler};
+
+static const httpd_uri_t uri_backup_restore = {.uri = "/backup/restore",
+                                               .method = HTTP_POST,
+                                               .handler =
+                                                   backup_restore_handler};
+
+static const httpd_uri_t uri_settings_api_get = {.uri = "/api/settings",
+                                                 .method = HTTP_GET,
+                                                 .handler =
+                                                     settings_api_get_handler};
+
+static const httpd_uri_t uri_settings_api_post = {
+    .uri = "/api/settings",
+    .method = HTTP_POST,
+    .handler = settings_api_post_handler};
+
+// Schedule API - Returns JSON schedule for Android app
+static esp_err_t schedule_api_handler(httpd_req_t *req) {
+  ESP_LOGI(TAG, "Schedule API: Streaming JSON schedule to client...");
+
+  // Send response as JSON API with chunked encoding
+  httpd_resp_set_type(req, "application/json");
+
+  // Stream start
+  httpd_resp_sendstr_chunk(req, "{\"schedule\":{");
+
+  const char *daysEn[] = {"monday", "tuesday",  "wednesday", "thursday",
+                          "friday", "saturday", "sunday"};
+  char chunk[256];
+
+  alarm_lock();
+  for (int i = 0; i < 7; i++) {
+    snprintf(chunk, sizeof(chunk), "\"%s\":[", daysEn[i]);
+    httpd_resp_sendstr_chunk(req, chunk);
+
+    bool first = true;
+    for (int j = 0; j < MAX_ALARMS_PER_DAY; j++) {
+      if (schedule[0][i].startHour[j] != -1 &&
+          schedule[0][i].endHour[j] != -1) {
+        
+        snprintf(chunk, sizeof(chunk),
+                 "%s{\"start\":\"%02d:%02d:%02d\",\"end\":\"%02d:%02d:%02d\","
+                 "\"endDay\":%d,\"relay\":%d}",
+                 first ? "" : ",",
+                 schedule[0][i].startHour[j], schedule[0][i].startMinute[j],
+                 schedule[0][i].startSecond[j], schedule[0][i].endHour[j],
+                 schedule[0][i].endMinute[j], schedule[0][i].endSecond[j],
+                 schedule[0][i].endDayOffset[j], schedule[0][i].relayIdx[j]);
+                 
+        httpd_resp_sendstr_chunk(req, chunk);
+        first = false;
+      }
+    }
+
+    snprintf(chunk, sizeof(chunk), "]%s", (i < 6) ? "," : "");
+    httpd_resp_sendstr_chunk(req, chunk);
+  }
+  alarm_unlock();
+
+  // Stream end
+  httpd_resp_sendstr_chunk(req, "}}");
+
+  // Finalize chunked response
+  httpd_resp_sendstr_chunk(req, NULL);
+
+  ESP_LOGI(TAG, "Schedule API: JSON stream completed successfully");
+  return ESP_OK;
+}
+
+// ========== Manual RTC Set Handler ==========
+static esp_err_t set_datetime_handler(httpd_req_t *req) {
+  char content[256];
+  int received = httpd_req_recv(req, content, sizeof(content) - 1);
+  if (received <= 0)
+    return ESP_FAIL;
+  content[received] = '\0';
+
+  cJSON *root = cJSON_Parse(content);
+  cJSON *item;
+  int year =
+      ((item = cJSON_GetObjectItem(root, "year")) && cJSON_IsNumber(item))
+          ? item->valueint
+          : 2026;
+  int month =
+      ((item = cJSON_GetObjectItem(root, "month")) && cJSON_IsNumber(item))
+          ? item->valueint
+          : 1;
+  int day = ((item = cJSON_GetObjectItem(root, "day")) && cJSON_IsNumber(item))
+                ? item->valueint
+                : 1;
+  int hour =
+      ((item = cJSON_GetObjectItem(root, "hour")) && cJSON_IsNumber(item))
+          ? item->valueint
+          : 0;
+  int minute =
+      ((item = cJSON_GetObjectItem(root, "minute")) && cJSON_IsNumber(item))
+          ? item->valueint
+          : 0;
+  int second =
+      ((item = cJSON_GetObjectItem(root, "second")) && cJSON_IsNumber(item))
+          ? item->valueint
+          : 0;
+
+  // Si le client transmet le décalage horaire de son appareil (new Date().getTimezoneOffset())
+  cJSON *tz_item = cJSON_GetObjectItem(root, "tz_offset");
+  if (tz_item && cJSON_IsNumber(tz_item)) {
+    int offset = tz_item->valueint; // 0 = GMT0, -60 = GMT+1
+    const char *target_tz = NULL;
+    if (offset == 0) {
+      target_tz = "GMT0";
+    } else if (offset == -60) {
+      target_tz = "CET-1";
+    } else if (offset == -120) {
+      target_tz = "EET-2";
+    }
+    if (target_tz) {
+      nvs_write_string("timezone", target_tz);
+      setenv("TZ", target_tz, 1);
+      tzset();
+      ESP_LOGI(TAG, "Timezone synced with client device (offset %d min -> %s)", offset, target_tz);
+    }
+  }
+
+  cJSON_Delete(root);
+
+  struct tm tm = {0};
+  tm.tm_year = year - 1900;
+  tm.tm_mon = month - 1;
+  tm.tm_mday = day;
+  tm.tm_hour = hour;
+  tm.tm_min = minute;
+  tm.tm_sec = second;
+  tm.tm_isdst = -1; // Auto-determine DST base on selected timezone
+
+  time_t t = mktime(&tm);
+  struct timeval tv = {.tv_sec = t, .tv_usec = 0};
+  settimeofday(&tv, NULL);
+
+  extern void ds3231_sync_from_system(void);
+  ds3231_sync_from_system();
+
+  extern bool g_is_time_synced;
+  g_is_time_synced = true;
+
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_sendstr(req, "{\"status\":\"ok\"}");
+  ESP_LOGI("HTTP_SRV", "Manual time set: %04d-%02d-%02d %02d:%02d:%02d", year, month,
+           day, hour, minute, second);
+  return ESP_OK;
+}
+
+// Handler for WiFi Scan
+static esp_err_t wifi_scan_handler(httpd_req_t *req) {
+  ESP_LOGI(TAG, "Starting WiFi Scan via API...");
+  uint16_t number = 15;
+  wifi_ap_record_t ap_info[15];
+  uint16_t ap_count = 0;
+  memset(ap_info, 0, sizeof(ap_info));
+
+  esp_err_t err = esp_wifi_scan_start(NULL, true);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "WiFi Scan failed: %s", esp_err_to_name(err));
+    httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Scan failed");
+    return ESP_FAIL;
+  }
+
+  esp_wifi_scan_get_ap_records(&number, ap_info);
+  esp_wifi_scan_get_ap_num(&ap_count);
+  ESP_LOGI(TAG, "Scan detected %d networks", ap_count);
+
+  cJSON *root = cJSON_CreateObject();
+  cJSON *networks = cJSON_CreateArray();
+  cJSON_AddItemToObject(root, "networks", networks);
+
+  for (int i = 0; i < number; i++) {
+    if (strlen((char *)ap_info[i].ssid) == 0)
+      continue;
+    cJSON *item = cJSON_CreateObject();
+    cJSON_AddStringToObject(item, "ssid", (char *)ap_info[i].ssid);
+    cJSON_AddNumberToObject(item, "rssi", ap_info[i].rssi);
+    cJSON_AddNumberToObject(item, "authmode", ap_info[i].authmode);
+    cJSON_AddItemToArray(networks, item);
+  }
+
+  const char *json_response = cJSON_Print(root);
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_sendstr(req, json_response);
+
+  free((void *)json_response);
+  cJSON_Delete(root);
+
+  return ESP_OK;
+}
+
+static const httpd_uri_t uri_wifi_scan = {
+    .uri = "/wifi_scan", .method = HTTP_GET, .handler = wifi_scan_handler};
+
+static const httpd_uri_t uri_set_datetime = {.uri = "/setDateTime",
+                                             .method = HTTP_POST,
+                                             .handler = set_datetime_handler};
+
+static const httpd_uri_t uri_schedule_api = {.uri = "/api/schedule",
+                                             .method = HTTP_GET,
+                                             .handler = schedule_api_handler};
+
+// ===================================
+// ESP-CAM PROXY HANDLERS
+// ===================================
+static char last_proxy_error[256] = "Aucune erreur";
+
+esp_err_t check_proxy_status_handler(httpd_req_t *req) {
+  char resp[300];
+  snprintf(resp, sizeof(resp), "{\"last_error\":\"%s\"}", last_proxy_error);
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_sendstr(req, resp);
+  return ESP_OK;
+}
+
+esp_err_t save_cam_ip_handler(httpd_req_t *req) {
+  char buf[100];
+  int ret, remaining = req->content_len;
+  if (remaining >= sizeof(buf)) {
+    httpd_resp_send_500(req);
+    return ESP_FAIL;
+  }
+  if ((ret = httpd_req_recv(req, buf, remaining)) <= 0) {
+    httpd_resp_send_500(req);
+    return ESP_FAIL;
+  }
+  buf[ret] = '\0';
+
+  cJSON *json = cJSON_Parse(buf);
+  if (json != NULL) {
+    cJSON *ip = cJSON_GetObjectItem(json, "ip");
+    if (ip && ip->valuestring) {
+      nvs_write_string("cam_ip", ip->valuestring);
+      httpd_resp_set_type(req, "application/json");
+      httpd_resp_sendstr(req, "{\"success\":true}");
+      cJSON_Delete(json);
+      return ESP_OK;
+    }
+    cJSON_Delete(json);
+  }
+  httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+  return ESP_FAIL;
+}
+
+esp_err_t debug_cam_handler(httpd_req_t *req) {
+  esp_ip4_addr_t addr;
+  addr.addr = 0;
+  char response[300];
+  char test_ip[20] = {0};
+  bool ip_found = false;
+  char source[10] = "";
+
+  ESP_LOGI(TAG, "Debug: Resolving esp32-cam via mDNS...");
+  esp_err_t err = mdns_query_a("esp32-cam", 1500, &addr);
+  if (err != ESP_OK) {
+    err = mdns_query_a("esp32-cam.local", 1500, &addr);
+  }
+
+  if (err == ESP_OK) {
+    snprintf(test_ip, sizeof(test_ip), IPSTR, IP2STR(&addr));
+    strcpy(source, "mDNS");
+    ip_found = true;
+    nvs_write_string("cam_ip", test_ip);
+    ESP_LOGI(TAG, "Debug: Camera found at %s. Saved to NVS.", test_ip);
+  } else {
+    esp_err_t nvs_err = nvs_read_string("cam_ip", test_ip, sizeof(test_ip));
+    if (nvs_err == ESP_OK && strlen(test_ip) > 0) {
+      strcpy(source, "NVS");
+      ip_found = true;
+    }
+  }
+
+  if (ip_found) {
+    char test_url[64];
+    snprintf(test_url, sizeof(test_url), "http://%s/led/status", test_ip);
+    esp_http_client_config_t config = {
+        .url = test_url,
+        .timeout_ms = 2000,
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    esp_err_t http_err = esp_http_client_perform(client);
+    esp_http_client_cleanup(client);
+
+    if (http_err == ESP_OK) {
+      snprintf(
+          response, sizeof(response),
+          "{\"success\":true,\"ip\":\"%s\",\"msg\":\"Camera en ligne via %s\"}",
+          test_ip, source);
+    } else {
+      snprintf(response, sizeof(response),
+               "{\"success\":false,\"msg\":\"IP %s trouvée (%s) mais camera "
+               "injoignable (Hors ligne?)\"}",
+               test_ip, source);
+    }
+  } else {
+    snprintf(response, sizeof(response),
+             "{\"success\":false,\"msg\":\"Camera introuvable. mDNS failed + "
+             "pas d'IP configuree.\"}");
+  }
+
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_sendstr(req, response);
+  return ESP_OK;
+}
+
+esp_err_t cam_proxy_handler(httpd_req_t *req) {
+  esp_ip4_addr_t addr;
+  addr.addr = 0;
+  bool ip_found = false;
+  char target_ip[20] = {0};
+
+  esp_err_t err = mdns_query_a("esp32-cam", 1500, &addr);
+  if (err != ESP_OK) {
+    err = mdns_query_a("esp32-cam.local", 1500, &addr);
+  }
+
+  if (err == ESP_OK) {
+    snprintf(target_ip, sizeof(target_ip), IPSTR, IP2STR(&addr));
+    ip_found = true;
+  } else {
+    err = nvs_read_string("cam_ip", target_ip, sizeof(target_ip));
+    if (err == ESP_OK && strlen(target_ip) > 0) {
+      ip_found = true;
+    }
+  }
+
+  if (!ip_found) {
+    ESP_LOGE(TAG, "Proxy: No IP available (mDNS + NVS failed)");
+    snprintf(last_proxy_error, sizeof(last_proxy_error),
+             "Err: Camera introuvable (mDNS+NVS failed)");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_status(req, "502 Bad Gateway");
+    httpd_resp_sendstr(req,
+                       "{\"error\":\"Camera introuvable. Cliquez Test 🔍.\"}");
+    return ESP_OK;
+  }
+
+  const char *subpath = req->uri + strlen("/cam_proxy");
+  char target_url[128];
+  snprintf(target_url, sizeof(target_url), "http://%s%s", target_ip, subpath);
+  ESP_LOGI(TAG, "Proxying request to: %s", target_url);
+
+  esp_http_client_config_t config = {
+      .url = target_url,
+      .timeout_ms = 4000,
+      .buffer_size_tx = 1024,
+      .user_data = NULL // Useful for perform if needed
+  };
+  esp_http_client_handle_t client = esp_http_client_init(&config);
+
+  if (req->method == HTTP_POST) {
+    esp_http_client_set_method(client, HTTP_METHOD_POST);
+  } else {
+    esp_http_client_set_method(client, HTTP_METHOD_GET);
+  }
+
+  if (req->method == HTTP_GET && strstr(subpath, "/sd/download") != NULL) {
+    // Chunked mode for potential large files
+    err = esp_http_client_open(client, 0);
+    if (err != ESP_OK) {
+      ESP_LOGE(TAG, "Proxy: Failed to open connect for download: %s",
+               esp_err_to_name(err));
+      httpd_resp_set_status(req, "502 Bad Gateway");
+      httpd_resp_sendstr(req, "Camera unreachable for file");
+      esp_http_client_cleanup(client);
+      return ESP_OK;
+    }
+    esp_http_client_fetch_headers(client);
+    char *content_dis = NULL;
+    esp_http_client_get_header(client, "Content-Disposition", &content_dis);
+    if (content_dis != NULL) {
+      httpd_resp_set_hdr(req, "Content-Disposition", content_dis);
+    }
+    httpd_resp_set_type(req, "application/octet-stream");
+    char stream_buf[1024];
+    int read_len;
+    while ((read_len = esp_http_client_read(client, stream_buf,
+                                            sizeof(stream_buf))) > 0) {
+      httpd_resp_send_chunk(req, stream_buf, read_len);
+    }
+    httpd_resp_send_chunk(req, NULL, 0);
+  } else {
+    // API call mode: Use perform for robustness
+    char api_resp_buf[1024] = {0};
+    err = esp_http_client_perform(client);
+    if (err == ESP_OK) {
+      int status_code = esp_http_client_get_status_code(client);
+      int actual_read = esp_http_client_read_response(client, api_resp_buf,
+                                                      sizeof(api_resp_buf) - 1);
+
+      if (actual_read >= 0) {
+        api_resp_buf[actual_read] = '\0';
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_sendstr(req, api_resp_buf);
+        snprintf(last_proxy_error, sizeof(last_proxy_error), "Succès (%d)",
+                 status_code);
+      } else {
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        httpd_resp_sendstr(req, "{\"error\":\"Empty response from camera\"}");
+      }
+    } else {
+      ESP_LOGE(TAG, "Proxy: esp_http_client_perform failed: %s",
+               esp_err_to_name(err));
+      snprintf(last_proxy_error, sizeof(last_proxy_error), "Perform error: %s",
+               esp_err_to_name(err));
+      httpd_resp_set_type(req, "application/json");
+      httpd_resp_set_status(req, "502 Bad Gateway");
+      httpd_resp_sendstr(req, "{\"error\":\"Camera Communication Error\"}");
+    }
+  }
+
+  esp_http_client_cleanup(client);
+  return ESP_OK;
+}
+
 static const httpd_uri_t uri_cam_proxy = {
     .uri = "/cam_proxy/*", .method = HTTP_GET, .handler = cam_proxy_handler};
 static const httpd_uri_t uri_cam_proxy_post = {
     .uri = "/cam_proxy/*", .method = HTTP_POST, .handler = cam_proxy_handler};
-static const httpd_uri_t uri_proxy_status = {
-    .uri = "/api/proxy_status", .method = HTTP_GET, .handler = check_proxy_status_handler};
+static const httpd_uri_t uri_proxy_status = {.uri = "/api/proxy_status",
+                                             .method = HTTP_GET,
+                                             .handler =
+                                                 check_proxy_status_handler};
 static const httpd_uri_t uri_save_cam_ip = {
-    .uri = "/saveCamIP", .method = HTTP_POST, .handler = save_cam_ip_handler};
+    .uri = "/api/cam_ip", .method = HTTP_POST, .handler = save_cam_ip_handler};
 static const httpd_uri_t uri_debug_cam = {
-    .uri = "/debugCam", .method = HTTP_GET, .handler = debug_cam_handler};
-
-// RTC Manual Set
-static const httpd_uri_t uri_set_datetime = {
-    .uri = "/setDateTime", .method = HTTP_POST, .handler = set_datetime_handler};
+    .uri = "/api/debug_cam", .method = HTTP_GET, .handler = debug_cam_handler};
 
 // ========== Server Start/Stop ==========
 
 // Register common handlers for both HTTP and HTTPS
 void register_common_handlers(httpd_handle_t server_handle) {
   // Common handlers
-  httpd_register_uri_handler(server_handle, &uri_api_health);
   httpd_register_uri_handler(server_handle, &uri_root);
   httpd_register_uri_handler(server_handle, &uri_login_post);
   httpd_register_uri_handler(server_handle, &uri_logout);
@@ -3888,7 +4542,6 @@ void register_common_handlers(httpd_handle_t server_handle) {
 
   // API Endpoints for Android App
   httpd_register_uri_handler(server_handle, &uri_schedule_api);
-  httpd_register_uri_handler(server_handle, &uri_schedule_api_get);
   httpd_register_uri_handler(server_handle, &uri_current_config_post);
   httpd_register_uri_handler(server_handle, &uri_recalibrate_zero);
 
@@ -3903,6 +4556,10 @@ void register_common_handlers(httpd_handle_t server_handle) {
   httpd_register_uri_handler(server_handle, &uri_backup_page);
   httpd_register_uri_handler(server_handle, &uri_backup_download);
   httpd_register_uri_handler(server_handle, &uri_backup_restore);
+  httpd_register_uri_handler(server_handle, &uri_set_lang);
+  httpd_register_uri_handler(server_handle, &uri_api_health);
+  httpd_register_uri_handler(server_handle, &uri_power_get);
+  httpd_register_uri_handler(server_handle, &uri_power_post);
 
   // Settings API
   httpd_register_uri_handler(server_handle, &uri_settings_api_get);
@@ -3919,12 +4576,7 @@ void register_common_handlers(httpd_handle_t server_handle) {
   httpd_register_uri_handler(server_handle, &uri_cam_proxy_post);
   httpd_register_uri_handler(server_handle, &uri_proxy_status);
   httpd_register_uri_handler(server_handle, &uri_save_cam_ip);
-  // Debugging
   httpd_register_uri_handler(server_handle, &uri_debug_cam);
-
-  // Power Management API
-  httpd_register_uri_handler(server_handle, &uri_power_get);
-  httpd_register_uri_handler(server_handle, &uri_power_post);
 }
 
 esp_err_t start_http_server(void) {
